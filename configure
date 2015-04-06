@@ -25374,7 +25374,8 @@ do
     "src/sacctmgr/Makefile") CONFIG_FILES="$CONFIG_FILES src/sacctmgr/Makefile" ;;
     "src/sreport/Makefile") CONFIG_FILES="$CONFIG_FILES src/sreport/Makefile" ;;
     "src/salloc/Makefile") CONFIG_FILES="$CONFIG_FILES src/salloc/Makefile" ;;
-    "src/sbatch/Makefile") CONFIG_FILES="$CONFIG_FILES src/sbatch/Makefile" ;;
+    "src/smigrate/Makefile") CONFIG_FILES="$CONFIG_FILES src/smigrate/Makefile" ;;
+    "src/salloc/Makefile") CONFIG_FILES="$CONFIG_FILES src/salloc/Makefile" ;;
     "src/sbcast/Makefile") CONFIG_FILES="$CONFIG_FILES src/sbcast/Makefile" ;;
     "src/sattach/Makefile") CONFIG_FILES="$CONFIG_FILES src/sattach/Makefile" ;;
     "src/scancel/Makefile") CONFIG_FILES="$CONFIG_FILES src/scancel/Makefile" ;;

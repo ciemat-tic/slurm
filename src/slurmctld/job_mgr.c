@@ -13806,6 +13806,11 @@ extern int job_restart(checkpoint_msg_t *ckpt_ptr, uid_t uid, slurm_fd_t conn_fd
 	ckpt_file = xstrdup(slurmctld_conf.job_ckpt_dir);
 	xstrfmtcat(ckpt_file, "/%u.ckpt", ckpt_ptr->job_id);
 
+	/*M
+	 * aqui lee el fichero de checkpoint y lo cvarga en "data"
+	 *
+	 *
+	 */
 	data = _read_job_ckpt_file(ckpt_file, &data_size);
 	xfree(ckpt_file);
 
@@ -13830,6 +13835,13 @@ extern int job_restart(checkpoint_msg_t *ckpt_ptr, uid_t uid, slurm_fd_t conn_fd
 		goto unpack_error;
 	}
 
+	/*M
+	 * en estas llamadas analiza el fichero de checkpoint (que esta en buffer)
+	 *
+	 * hay que recordar que un flag (que pone el usuario) indica si podemos levantar la imagen
+	 * en una maquina distinta a la que se creo o tiene que ser la misma
+	 */
+
 	/* unpack checkpoint image directory */
 	safe_unpackstr_xmalloc(&image_dir, &tmp_uint32, buffer);
 
@@ -13837,6 +13849,19 @@ extern int job_restart(checkpoint_msg_t *ckpt_ptr, uid_t uid, slurm_fd_t conn_fd
 	safe_unpackstr_xmalloc(&alloc_nodes, &tmp_uint32, buffer);
 
 	/* unpack the job req */
+
+	/*
+	 * M
+	 * aqyui el mensaje es de tipo REQUEST_SUBMIT_BATCH_JOB
+	 * y es lo que desmpaquetamos. Pero de donde sale esa info?
+	 * msg la coge de buffer
+	 * buffer lo cargamos con create_buf(data...
+	 * data es data = _read_job_ckpt_file(ckpt_file...
+	 * y ese file lo cogemos con el ID del puntero. OK
+	 *
+	 *
+	 *
+	 */
 	msg.msg_type = REQUEST_SUBMIT_BATCH_JOB;
 	msg.protocol_version = ckpt_version;
 	if (unpack_msg(&msg, buffer) != SLURM_SUCCESS)
@@ -13865,6 +13890,20 @@ extern int job_restart(checkpoint_msg_t *ckpt_ptr, uid_t uid, slurm_fd_t conn_fd
 		alloc_nodes = NULL;	/* Nothing left to xfree */
 	}
 
+	/*
+	 * MANUEL
+	 */
+
+	if (ckpt_ptr->nodeList != NULL){
+		job_desc->req_nodes = ckpt_ptr->nodeList;
+		printf("HEIEHEIEIE hemos puesto un valor en job_desc->req_nodes\n");
+	}
+	else {
+		printf ("IN job_mgr-job_restart, We have detected that ckpt_ptr->nodeList is NULL. \n");
+
+	}
+
+
 	/* set open mode to append */
 	job_desc->open_mode = OPEN_MODE_APPEND;
 
@@ -13876,6 +13915,12 @@ extern int job_restart(checkpoint_msg_t *ckpt_ptr, uid_t uid, slurm_fd_t conn_fd
 	 * This is for setting the job_id to the original one.
 	 * But this will bypass some partition access permission checks.
 	 * TODO: fix this.
+	 */
+
+	/*
+	 * M
+	 * aqui esta la llamada que levanta el trabajo otra vez.
+	 *
 	 */
 	rc = job_allocate(job_desc,
 			  0,		/* immediate */

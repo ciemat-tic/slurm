@@ -81,6 +81,7 @@ int main(int argc, char *argv[])
 	void *script_body;
 	int script_size = 0;
 	int retries = 0;
+	int errorCode = 0;
 
 	slurm_conf_init(NULL);
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
@@ -90,6 +91,13 @@ int main(int argc, char *argv[])
 		error("Failed to initialize plugin stack");
 		exit(error_exit);
 	}
+
+	if (argc < 2) {
+		error("this program require input parameters. Execute it with \"--help\" for a complete list of options");
+		exit(error_exit);
+	}
+
+
 
 	/* Be sure to call spank_fini when smigrate exits
 	 */
@@ -126,8 +134,11 @@ int main(int argc, char *argv[])
 
 	/*********START OF MIGRATION PROCESS ************/
 
+
+	/*VERIFICATION OF INPUT DATA */
+
 	printf ("Slurm task migration\n\n");
-	printf(" slurm jobid: %d\n", opt.jobid);
+	printf("slurm jobid: %d\n", opt.jobid);
 
 	job_info_msg_t * job_ptr = NULL;
 	uint16_t show_flags = 0;
@@ -146,56 +157,120 @@ int main(int argc, char *argv[])
 
 
 	time_t start_time; //if checkpointing is already being performed, the start time is set here
-	if (slurm_checkpoint_able( opt.jobid, opt.stepid, &start_time) != SLURM_SUCCESS){
-		printf ("Job is not checkpointable\n");
-		printf ("it should be feinish here, but I'll employ the same code for test\n");
-		//exit(-1);
+	if (( errorCode = slurm_checkpoint_able( opt.jobid, opt.stepid, &start_time)) != SLURM_SUCCESS){
+		slurm_perror ("Job is not checkpointable\n");
+		//printf ("it should be finish here, but I'll employ the same code for test\n");
+		exit(errorCode);
 	}
 
 	node_info_msg_t *node_access = NULL;
-	if (slurm_load_node_single(&node_access, opt.node, show_flags) != 0) {
-		printf ("Specified node does not exist\n");
-		exit(-1);
+	if (( errorCode = slurm_load_node_single(&node_access, opt.node, show_flags)) != 0) {
+		slurm_perror ("Specified node does not exist.\n");
+		exit(errorCode);
 	}
 	node_info_t node = node_access->node_array[0];
-
 	if (node.node_state !=	NODE_STATE_IDLE) {
-		printf ("Node should be iddle and ready to be used\n");
+		printf ("Node should be iddle and ready to be used.\n");
 		exit(-1);
 	}
-
-
-
 	else {
-		printf("Node %s is iddle and ready to be used\n", node.name);
-		exit(-1);
+		/*
+		 * slurm_init_resv_desc_msg - initialize reservation descriptor with
+		 *	default values
+		 * OUT job_desc_msg - user defined partition descriptor
+		 */
+	    resv_desc_msg_t         resv_msg;
+	    char                   *resv_name = NULL;
+		slurm_init_resv_desc_msg ( &resv_msg );
+		resv_msg.start_time = time(NULL) + 1;  /* Now! */
+		resv_msg.duration = job_info.time_limit;
+		//uint32_t node_cnt = 1;
+		//resv_msg.node_cnt = &node_cnt;
+		resv_msg.node_list = opt.node; //TODO this reserves just one node. We have to think what to do with parallel jobs
+		resv_msg.users = "root"; //TODO this has to be taken from the job.
+								//The problem is that job_info.user_id gives the Id, and i don't know how to get the user name from that
+
+		/*
+		resv_name = slurm_create_reservation (&resv_msg);
+		if (!resv_name) {
+			 slurm_perror ("slurm_create_reservation error");
+			 exit (1);
+		}
+		free(resv_name);
+		 */
+		printf ("Reservation is disabled now for debiugging purposes \n");
+		printf("Node %s is reserved, waiting for the migration.\n", node.name);
 	}
 
+	// free the node information response message
+	slurm_free_node_info_msg(node_access);
+
+	/* CREATE CHECKPOINT */
+	printf ("Starting checkpoint\n");
+
+
+	//TODO decide later where to put this.
+	//before the checkpoint: error due to desc not initialized
+	//after: makes no sense, as this is just a test and should not obly to make a checkpoint.
 	/*
-	 * slurm_free_node_info_msg - free the node information response message
-	 * IN msg - pointer to node information response message
-	 * NOTE: buffer is loaded by slurm_load_node.
-	 */
-	//extern void slurm_free_node_info_msg PARAMS(
-		//(node_info_msg_t * node_buffer_ptr));
-
-	/*
-	 *
-	 *
-	 */
-
-
-
-	exit(0);
-
-	if (opt.test_only) {
+	if (opt.test_only){
+		printf("opt testontly");
 		if (slurm_job_will_run(&desc) != SLURM_SUCCESS) {
 			slurm_perror("allocation failure");
 			exit (1);
 		}
-		exit (0);
+	}
+	 */
+
+	/*
+	 * slurm_checkpoint_vacate - equest a checkpoint for the identified job step.
+	 *  Terminate its execution upon completion of the checkpoint.
+	 *
+	 *	the job will continue execution after the checkpoint operation completes
+	 * IN job_id   - job on which to perform operation
+	 * IN step_id  - job step on which to perform operation
+	 * IN max_wait  - maximum wait for operation to complete, in seconds
+	 * IN image_dir - directory used to get/put checkpoint images
+	 * RET 0 or a slurm error code
+	 */
+	printf("checkpointing code\n");
+	char* checkpoint_location = "/home/slurm";
+
+	if (( errorCode = slurm_checkpoint_vacate (opt.jobid, opt.stepid, 0,checkpoint_location )) != 0){
+		slurm_perror ("there was an error calling slurm_checkpoint_vacate. Error:");
+		exit(errorCode);
+	 }
+	/* RESTART CHECKPOINT SOMEWHERE ELSE */
+
+	printf("restarting checkpoint. This will take a while\n");
+
+
+	/*
+	 * slurm_checkpoint_restart - restart execution of a checkpointed job step.
+	 * IN job_id  - job on which to perform operation
+	 * IN step_id - job step on which to perform operation
+	 * stick  If non-zero then restart the job on the same nodes that it was checkpointed from.
+	 * image_dir - Directory specification for where the checkpoint file should be read from or written to
+	 *
+	 * RET 0 or a slurm error code
+	 */
+	int i = 0;
+	while ( slurm_checkpoint_restart(opt.jobid , opt.stepid, 0,  checkpoint_location) != 0) {
+		sleep (10);
+		i = i + 10;
+		//slurm_perror("Error: ");
+		printf ("...%i\n", i);
+
 	}
 
+	printf("restarted!");
+
+
+/*
+ *
+ * I don't know why this is here
+ */
+/*
 	while (slurm_submit_batch_job(&desc, &resp) < 0) {
 		static char *msg;
 
@@ -217,7 +292,7 @@ int main(int argc, char *argv[])
 		if (retries)
 			debug("%s", msg);
 		else if (errno == ESLURM_NODES_BUSY)
-			info("%s", msg); /* Not an error, powering up nodes */
+			info("%s", msg);
 		else
 			error("%s", msg);
 		sleep (++retries);
@@ -225,6 +300,10 @@ int main(int argc, char *argv[])
 
 	xfree(desc.script);
 	slurm_free_submit_response_response_msg(resp);
+
+	*/
+
+
 	return 0;
 }
 

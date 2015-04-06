@@ -203,6 +203,7 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 	int i, rpc_type_index = -1, rpc_user_index = -1;
 	uint32_t rpc_uid;
 
+
 	/* Just to validate the cred */
 	rpc_uid = (uint32_t) g_slurm_auth_get_uid(msg->auth_cred, NULL);
 	if (g_slurm_auth_errno(msg->auth_cred) != SLURM_SUCCESS) {

@@ -77,6 +77,7 @@
 #include "src/slurmdbd/read_config.h"
 #include "src/common/slurm_accounting_storage.h"
 
+
 /* EXTERNAL VARIABLES */
 
 /* #DEFINES */
@@ -2842,6 +2843,9 @@ int slurm_receive_msg(slurm_fd_t fd, slurm_msg_t *msg, int timeout)
 	free_buf(buffer);
 	rc = SLURM_SUCCESS;
 
+
+
+
 total_return:
 	destroy_forward(&header.forward);
 
@@ -2858,6 +2862,12 @@ total_return:
 
 }
 
+/*experimental*/
+void segfault_sigaction(int signal, siginfo_t *si, void *arg)
+{
+    printf("Caught segfault at address %p\n", si->si_addr);
+    exit(0);
+}
 /*
  * NOTE: memory is allocated for the returned list
  *       and must be freed at some point using the list_destroy function.

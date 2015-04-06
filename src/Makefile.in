@@ -185,7 +185,7 @@ am__define_uniq_tagged_files = \
 ETAGS = etags
 CTAGS = ctags
 DIST_SUBDIRS = api common database db_api plugins sacct sacctmgr \
-	salloc sattach sbatch sbcast scancel scontrol sdiag sinfo \
+	salloc sattach sbatch smigrate sbcast scancel scontrol sdiag sinfo \
 	slurmctld slurmd slurmdbd smap smd sprio squeue sreport \
 	srun_cr sshare sstat strigger sview srun
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -456,7 +456,7 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 SUBDIRS = api common database db_api plugins sacct sacctmgr salloc \
-	sattach sbatch sbcast scancel scontrol sdiag sinfo slurmctld \
+	sattach sbatch smigrate sbcast scancel scontrol sdiag sinfo slurmctld \
 	slurmd slurmdbd smap smd sprio squeue sreport srun_cr sshare \
 	sstat strigger sview $(am__append_1)
 all: all-recursive

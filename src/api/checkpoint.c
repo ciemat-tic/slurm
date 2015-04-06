@@ -79,12 +79,33 @@ static int _checkpoint_op (uint16_t op, uint16_t data,
 	checkpoint_msg_t ckp_req;
 	slurm_msg_t req_msg;
 
+
+	/* esto pa cuando funcione lo de los parametros
+	va_list arguments;
+	va_start ( arguments, image_dir );
+	char* nodeName = "";
+	char destinationNodes[99] =NULL; //TODO max size should be set somehow
+
+	while (true){
+		nodeName = va_arg(arguments, char* );
+		if (nodeName != NULL) {
+		strcat(destinationNodes, ",");  //TODO Is it possible to concat on the first iteration, when DestinationNodes is NULL?
+		strcat(destinationNodes, nodeName);
+
+	}
+	*/
+
+	//TODO No funciona lo de los parametros variables
+	char destinationNodes[99] = "tecno6-1";
+
+
 	slurm_msg_t_init(&req_msg);
 	ckp_req.op        = op;
 	ckp_req.data      = data;
 	ckp_req.job_id    = job_id;
 	ckp_req.step_id   = step_id;
 	ckp_req.image_dir = image_dir;
+	ckp_req.nodeList  = destinationNodes;
 	req_msg.msg_type  = REQUEST_CHECKPOINT;
 	req_msg.data      = &ckp_req;
 
@@ -216,9 +237,26 @@ extern int slurm_checkpoint_vacate (uint32_t job_id, uint32_t step_id,
  * IN step_id - job step on which to perform operation
  * RET 0 or a slurm error code
  */
-extern int slurm_checkpoint_restart (uint32_t job_id, uint32_t step_id,
-				     uint16_t stick, char *image_dir)
+
+extern int slurm_checkpoint_restart (uint32_t job_id, uint32_t step_id, uint16_t stick, char *image_dir)
 {
+
+	//TODO aqui falta lo de los parametros variables
+
+	/*
+	va_list arguments;
+    va_start ( arguments, image_dir );
+    char* nodeName = "";
+
+    printf("Start printing node arguments");
+
+    while (nodeName != NULL) {
+    	nodeName = va_arg(arguments, char* );
+    	printf(nodeName);
+    }
+
+    printf("That are all my node arguments");
+*/
 	return _checkpoint_op (CHECK_RESTART, stick, job_id, step_id, image_dir);
 }
 

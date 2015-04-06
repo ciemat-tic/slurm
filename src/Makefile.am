@@ -9,6 +9,7 @@ SUBDIRS =		\
 	salloc		\
 	sattach		\
 	sbatch		\
+	smigrate	\
 	sbcast		\
 	scancel		\
 	scontrol	\
