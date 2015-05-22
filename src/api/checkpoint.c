@@ -61,7 +61,7 @@
 static int _handle_rc_msg(slurm_msg_t *msg);
 static int _checkpoint_op (uint16_t op, uint16_t data,
 			   uint32_t job_id, uint32_t step_id,
-			   char *image_dir);
+			   char *image_dir, ...);
 /*
  * _checkpoint_op - perform many checkpoint operation for some job step.
  * IN op        - operation to perform
@@ -73,30 +73,41 @@ static int _checkpoint_op (uint16_t op, uint16_t data,
  */
 static int _checkpoint_op (uint16_t op, uint16_t data,
 			   uint32_t job_id, uint32_t step_id,
-			   char *image_dir)
+			   char *image_dir, ...)
 {
 	int rc;
 	checkpoint_msg_t ckp_req;
 	slurm_msg_t req_msg;
 
+	printf( "we are in _checkpoint_op1\n");
+	/* esto pa cuando funcione lo de los parametros*/
+	char destinationNodes[99] = ""; //TODO max size should be set somehow
+	if (op == CHECK_RESTART){
+		printf( "we are in _checkpoint_op2\n");
 
-	/* esto pa cuando funcione lo de los parametros
-	va_list arguments;
-	va_start ( arguments, image_dir );
-	char* nodeName = "";
-	char destinationNodes[99] =NULL; //TODO max size should be set somehow
+		va_list arguments;
+		va_start ( arguments, image_dir );
+		char* nodeName = "";
 
-	while (true){
-		nodeName = va_arg(arguments, char* );
-		if (nodeName != NULL) {
-		strcat(destinationNodes, ",");  //TODO Is it possible to concat on the first iteration, when DestinationNodes is NULL?
-		strcat(destinationNodes, nodeName);
+		while (true){
+			nodeName = va_arg(arguments, char* );
+			if (nodeName != NULL) {
+				if (destinationNodes != "")
+					strcat(destinationNodes, ",");  //TODO Is it possible to concat on the first iteration, when DestinationNodes is NULL?
+			strcat(destinationNodes, nodeName);
+
+			}
+		}
+		printf( "we are in _checkpoint_op3\n");
+
 
 	}
-	*/
+
+	printf ("destinationNodes vale %s\n", destinationNodes);
 
 	//TODO No funciona lo de los parametros variables
-	char destinationNodes[99] = "tecno6-1";
+//	char destinationNodes[99] = "tecno6-1";
+	printf( "we are in _checkpoint_op4\n");
 
 
 	slurm_msg_t_init(&req_msg);
@@ -111,6 +122,7 @@ static int _checkpoint_op (uint16_t op, uint16_t data,
 
 	if (slurm_send_recv_controller_rc_msg(&req_msg, &rc) < 0)
 		return SLURM_ERROR;
+	printf( "we are in _checkpoint_op5\n");
 
 	slurm_seterrno(rc);
 	return rc;
@@ -227,6 +239,7 @@ extern int slurm_checkpoint_requeue (uint32_t job_id, uint16_t max_wait,
 extern int slurm_checkpoint_vacate (uint32_t job_id, uint32_t step_id,
 		uint16_t max_wait, char *image_dir)
 {
+	printf("I am in slurm_checkpoint_vacate\n");
 	return _checkpoint_op (CHECK_VACATE, max_wait, job_id, step_id,
 			       image_dir);
 }
@@ -238,26 +251,48 @@ extern int slurm_checkpoint_vacate (uint32_t job_id, uint32_t step_id,
  * RET 0 or a slurm error code
  */
 
-extern int slurm_checkpoint_restart (uint32_t job_id, uint32_t step_id, uint16_t stick, char *image_dir)
+double average ( int num, ... )
+{
+    va_list arguments;
+    double sum = 0;
+
+    /* Initializing arguments to store all values after num */
+    va_start ( arguments, num );
+    /* Sum all the inputs; we still rely on the function caller to tell us how
+     * many there are */
+    int x = 0;
+
+    for ( x = 0; x < num; x++ )
+    {
+        sum += va_arg ( arguments, double );
+    }
+    va_end ( arguments );                  // Cleans up the list
+
+    return sum / num;
+}
+
+
+extern int slurm_checkpoint_restart (uint32_t job_id, uint32_t step_id, uint16_t stick, char *image_dir,  ...)
 {
 
 	//TODO aqui falta lo de los parametros variables
 
-	/*
+    printf("I am in slurm_checkpoint_restart");
+
 	va_list arguments;
     va_start ( arguments, image_dir );
-    char* nodeName = "";
+    char* nodeNames = "";
 
     printf("Start printing node arguments");
 
-    while (nodeName != NULL) {
-    	nodeName = va_arg(arguments, char* );
-    	printf(nodeName);
+    while (nodeNames != NULL) {
+    	nodeNames = va_arg(arguments, char* );
+    	printf(nodeNames);
     }
 
     printf("That are all my node arguments");
-*/
-	return _checkpoint_op (CHECK_RESTART, stick, job_id, step_id, image_dir);
+
+	return _checkpoint_op (CHECK_RESTART, stick, job_id, step_id, image_dir, nodeNames);
 }
 
 /*

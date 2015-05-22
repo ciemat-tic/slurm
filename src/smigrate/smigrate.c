@@ -65,8 +65,8 @@
 #define MAX_RETRIES 15
 
 static void  _set_exit_code(void);
-static void  _set_prio_process_env(void);
-static void  _set_submit_dir_env(void);
+//static void  _set_prio_process_env(void);
+//static void  _set_submit_dir_env(void);
 
 int main(int argc, char *argv[])
 {
@@ -75,12 +75,9 @@ int main(int argc, char *argv[])
 
 
 	log_options_t logopt = LOG_OPTS_STDERR_ONLY;
-	job_desc_msg_t desc;
-	submit_response_msg_t *resp;
 	char *script_name;
 	void *script_body;
 	int script_size = 0;
-	int retries = 0;
 	int errorCode = 0;
 
 	slurm_conf_init(NULL);
@@ -180,7 +177,6 @@ int main(int argc, char *argv[])
 		 * OUT job_desc_msg - user defined partition descriptor
 		 */
 	    resv_desc_msg_t         resv_msg;
-	    char                   *resv_name = NULL;
 		slurm_init_resv_desc_msg ( &resv_msg );
 		resv_msg.start_time = time(NULL) + 1;  /* Now! */
 		resv_msg.duration = job_info.time_limit;
@@ -236,6 +232,7 @@ int main(int argc, char *argv[])
 	printf("checkpointing code\n");
 	char* checkpoint_location = "/home/slurm";
 
+	printf ("I am going to call slurm_checkpoint_vacate\n");
 	if (( errorCode = slurm_checkpoint_vacate (opt.jobid, opt.stepid, 0,checkpoint_location )) != 0){
 		slurm_perror ("there was an error calling slurm_checkpoint_vacate. Error:");
 		exit(errorCode);
@@ -255,6 +252,9 @@ int main(int argc, char *argv[])
 	 * RET 0 or a slurm error code
 	 */
 	int i = 0;
+	printf ("I am going to call slurm_checkpoint_restart\n");
+	printf ("node value is %s\n", opt.node);
+
 	while ( slurm_checkpoint_restart(opt.jobid , opt.stepid, 0,  checkpoint_location) != 0) {
 		sleep (10);
 		i = i + 10;
@@ -324,6 +324,8 @@ static void _set_exit_code(void)
 
 /* Set SLURM_SUBMIT_DIR and SLURM_SUBMIT_HOST environment variables within
  * current state */
+
+/*
 static void _set_submit_dir_env(void)
 {
 	char buf[MAXPATHLEN + 1], host[256];
@@ -338,7 +340,7 @@ static void _set_submit_dir_env(void)
 	else if (setenvf(NULL, "SLURM_SUBMIT_HOST", "%s", host) < 0)
 		error("unable to set SLURM_SUBMIT_HOST in environment");
 }
-
+*/
 
 /*
  * _set_prio_process_env
@@ -347,11 +349,14 @@ static void _set_submit_dir_env(void)
  * the propagation of the users nice value and the "PropagatePrioProcess"
  * config keyword.
  */
+
+
+/*
 static void  _set_prio_process_env(void)
 {
 	int retval;
 
-	errno = 0; /* needed to detect a real failure since prio can be -1 */
+	errno = 0; // needed to detect a real failure since prio can be -1
 
 	if ((retval = getpriority (PRIO_PROCESS, 0)) == -1)  {
 		if (errno) {
@@ -367,4 +372,4 @@ static void  _set_prio_process_env(void)
 
 	debug ("propagating SLURM_PRIO_PROCESS=%d", retval);
 }
-
+*/
