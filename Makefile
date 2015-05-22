@@ -114,6 +114,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/x_ac_bluegene.m4 \
 	$(top_srcdir)/auxdir/x_ac_cflags.m4 \
 	$(top_srcdir)/auxdir/x_ac_cray.m4 \
+	$(top_srcdir)/auxdir/x_ac_curl.m4 \
 	$(top_srcdir)/auxdir/x_ac_databases.m4 \
 	$(top_srcdir)/auxdir/x_ac_debug.m4 \
 	$(top_srcdir)/auxdir/x_ac_dlfcn.m4 \
@@ -140,7 +141,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/x_ac_sgi_job.m4 \
 	$(top_srcdir)/auxdir/x_ac_slurm_ssl.m4 \
 	$(top_srcdir)/auxdir/x_ac_sun_const.m4 \
-	$(top_srcdir)/auxdir/x_ac_xcpu.m4 $(top_srcdir)/configure.ac
+	$(top_srcdir)/configure.ac
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
@@ -298,14 +299,14 @@ BGQ_LOADED =
 BG_INCLUDES = 
 BG_LDFLAGS = 
 BG_L_P_LOADED = 
-BLCR_CPPFLAGS = -I/usr/local/include
-BLCR_HOME = /usr/local
-BLCR_LDFLAGS = -L/usr/local/lib64
-BLCR_LIBS = -lcr
+BLCR_CPPFLAGS = 
+BLCR_HOME = 
+BLCR_LDFLAGS = 
+BLCR_LIBS = 
 BLUEGENE_LOADED = 
 CC = gcc
 CCDEPMODE = depmode=gcc3
-CFLAGS = -g -O2 -pthread -fno-gcse
+CFLAGS = -g -O2 -pthread -fno-gcse -Wall -g -O0 -fno-strict-aliasing
 CHECK_CFLAGS = 
 CHECK_LIBS = 
 CMD_LDFLAGS = 
@@ -322,7 +323,7 @@ CRAY_TASK_LDFLAGS =
 CXX = g++
 CXXCPP = g++ -E
 CXXDEPMODE = depmode=gcc3
-CXXFLAGS = -g -O2
+CXXFLAGS = -g -O2 -Wall -g -O0 -fno-strict-aliasing
 CYGPATH_W = echo
 DEFS = -DHAVE_CONFIG_H
 DEPDIR = .deps
@@ -377,6 +378,8 @@ JSON_CPPFLAGS =
 JSON_LDFLAGS = 
 LD = /usr/bin/ld -m elf_x86_64
 LDFLAGS =  
+LIBCURL = 
+LIBCURL_CPPFLAGS = 
 LIBOBJS = 
 LIBS =  
 LIBTOOL = $(SHELL) $(top_builddir)/libtool
@@ -431,7 +434,7 @@ RANLIB = ranlib
 READLINE_LIBS = 
 REAL_BGQ_LOADED = 
 REAL_BG_L_P_LOADED = 
-RELEASE = 0pre1
+RELEASE = 0pre5
 RRDTOOL_CPPFLAGS = 
 RRDTOOL_LDFLAGS = 
 RRDTOOL_LIBS = 
@@ -441,6 +444,7 @@ SEMAPHORE_LIBS =
 SEMAPHORE_SOURCES = semaphore.c
 SET_MAKE = 
 SHELL = /bin/sh
+SLEEP_CMD = /usr/bin/sleep
 SLURMCTLD_PORT = 
 SLURMCTLD_PORT_COUNT = 
 SLURMDBD_PORT = 
@@ -455,14 +459,16 @@ SLURM_MICRO = 0
 SLURM_MINOR = 08
 SLURM_PREFIX = 
 SLURM_VERSION_NUMBER = 0x0f0800
-SLURM_VERSION_STRING = 15.08.0-0pre1
+SLURM_VERSION_STRING = 15.08.0-0pre5
 SO_LDFLAGS = 
 SSL_CPPFLAGS = 
 SSL_LDFLAGS = 
 SSL_LIBS = -lcrypto
 STRIP = strip
+SUCMD = /usr/bin/su
 UTIL_LIBS = -lutil
 VERSION = 15.08
+_libcurl_config = 
 abs_builddir = /root/slurm
 abs_srcdir = /root/slurm
 abs_top_builddir = /root/slurm
@@ -471,7 +477,7 @@ ac_ct_AR = ar
 ac_ct_CC = gcc
 ac_ct_CXX = g++
 ac_ct_DUMPBIN = 
-ac_have_man2html = yes
+ac_have_man2html = no
 am__include = include
 am__leading_dot = .
 am__quote = 
