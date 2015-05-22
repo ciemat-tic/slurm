@@ -89,9 +89,11 @@ struct node_res_record {
 	uint16_t boards; 		/* count of boards configured */
 	uint16_t sockets;		/* count of sockets configured */
 	uint16_t cores;			/* count of cores configured */
+	uint16_t threads;		/* count of hyperthreads per core */
 	uint16_t vpus;			/* count of virtual cpus (hyperthreads)
 					 * configured per core */
 	uint32_t real_memory;		/* MB of real memory configured */
+	uint32_t mem_spec_limit;	/* MB of specialized/system memory */
 };
 
 /* per-node resource usage record */
@@ -104,6 +106,7 @@ struct node_use_record {
 };
 
 extern bool     backfill_busy_nodes;
+extern bool     have_dragonfly;
 extern bool     pack_serial_at_end;
 extern bool     preempt_by_qos;
 extern uint64_t select_debug_flags;

@@ -43,23 +43,24 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include "src/common/env.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/slurm_auth.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
-#include "src/common/env.h"
 #include "src/slurmdbd/read_config.h"
 #include "common_as.h"
 
-extern char *assoc_hour_table;
 extern char *assoc_day_table;
+extern char *assoc_hour_table;
 extern char *assoc_month_table;
 
-extern char *cluster_hour_table;
 extern char *cluster_day_table;
+extern char *cluster_hour_table;
 extern char *cluster_month_table;
 
-extern char *wckey_hour_table;
 extern char *wckey_day_table;
+extern char *wckey_hour_table;
 extern char *wckey_month_table;
 
 /*
@@ -180,6 +181,10 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 	case SLURMDB_ADD_COORD:
 	case SLURMDB_REMOVE_COORD:
 		update_object->objects = list_create(slurmdb_destroy_user_rec);
+		break;
+	case SLURMDB_ADD_TRES:
+		xassert(((slurmdb_tres_rec_t *)object)->id);
+		update_object->objects = list_create(slurmdb_destroy_tres_rec);
 		break;
 	case SLURMDB_ADD_ASSOC:
 		/* We are going to send these to the slurmctld's so
@@ -324,6 +329,9 @@ extern void dump_update_list(List update_list)
 		case SLURMDB_REMOVE_COORD:
 			debug3("\tUSER RECORDS");
 			break;
+		case SLURMDB_ADD_TRES:
+			debug3("\tTRES RECORDS");
+			break;
 		case SLURMDB_ADD_ASSOC:
 		case SLURMDB_MODIFY_ASSOC:
 		case SLURMDB_REMOVE_ASSOC:
@@ -414,7 +422,8 @@ extern int cluster_first_reg(char *host, uint16_t port, uint16_t rpc_version)
  * IN/OUT usage_end: end time
  * RET: error code
  */
-extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
+extern int set_usage_information(char **usage_table,
+				 slurmdbd_msg_type_t type,
 				 time_t *usage_start, time_t *usage_end)
 {
 	time_t start = (*usage_start), end = (*usage_end);
@@ -425,14 +434,14 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 
 	/* Default is going to be the last day */
 	if (!end) {
-		if (!localtime_r(&my_time, &end_tm)) {
+		if (!slurm_localtime_r(&my_time, &end_tm)) {
 			error("Couldn't get localtime from end %ld",
 			      my_time);
 			return SLURM_ERROR;
 		}
 		end_tm.tm_hour = 0;
 	} else {
-		if (!localtime_r(&end, &end_tm)) {
+		if (!slurm_localtime_r(&end, &end_tm)) {
 			error("Couldn't get localtime from user end %ld",
 			      end);
 			return SLURM_ERROR;
@@ -441,10 +450,10 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 	end_tm.tm_sec = 0;
 	end_tm.tm_min = 0;
 	end_tm.tm_isdst = -1;
-	end = mktime(&end_tm);
+	end = slurm_mktime(&end_tm);
 
 	if (!start) {
-		if (!localtime_r(&my_time, &start_tm)) {
+		if (!slurm_localtime_r(&my_time, &start_tm)) {
 			error("Couldn't get localtime from start %ld",
 			      my_time);
 			return SLURM_ERROR;
@@ -452,7 +461,7 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 		start_tm.tm_hour = 0;
 		start_tm.tm_mday--;
 	} else {
-		if (!localtime_r(&start, &start_tm)) {
+		if (!slurm_localtime_r(&start, &start_tm)) {
 			error("Couldn't get localtime from user start %ld",
 			      start);
 			return SLURM_ERROR;
@@ -461,11 +470,11 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 	start_tm.tm_sec = 0;
 	start_tm.tm_min = 0;
 	start_tm.tm_isdst = -1;
-	start = mktime(&start_tm);
+	start = slurm_mktime(&start_tm);
 
 	if (end-start < 3600) {
 		end = start + 3600;
-		if (!localtime_r(&end, &end_tm)) {
+		if (!slurm_localtime_r(&end, &end_tm)) {
 			error("2 Couldn't get localtime from user end %ld",
 			      end);
 			return SLURM_ERROR;
@@ -492,7 +501,7 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 			     slurmdbd_msg_type_2_str(type, 1));
 			break;
 		}
-	} else if (start_tm.tm_mday == 0 && end_tm.tm_mday == 0
+	} else if (start_tm.tm_mday == 1 && end_tm.tm_mday == 1
 		  && (end-start > 86400)) {
 		switch (type) {
 		case DBD_GET_ASSOC_USAGE:
@@ -514,6 +523,7 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 	(*usage_start) = start;
 	(*usage_end) = end;
 	(*usage_table) = my_usage_table;
+
 	return SLURM_SUCCESS;
 }
 
@@ -655,8 +665,8 @@ extern time_t archive_setup_end_time(time_t last_submit, uint32_t purge)
 		return 0;
 	}
 
-	/* use localtime to avoid any daylight savings issues */
-	if (!localtime_r(&last_submit, &time_tm)) {
+	/* use slurm_localtime to avoid any daylight savings issues */
+	if (!slurm_localtime_r(&last_submit, &time_tm)) {
 		error("Couldn't get localtime from first "
 		      "suspend start %ld", (long)last_submit);
 		return 0;
@@ -682,7 +692,7 @@ extern time_t archive_setup_end_time(time_t last_submit, uint32_t purge)
 	}
 
 	time_tm.tm_isdst = -1;
-	return (mktime(&time_tm) - 1);
+	return (slurm_mktime(&time_tm) - 1);
 }
 
 
@@ -810,7 +820,7 @@ static char *_make_archive_name(time_t period_start, time_t period_end,
 	char start_char[32];
 	char end_char[32];
 
-	localtime_r((time_t *)&period_start, &time_tm);
+	slurm_localtime_r((time_t *)&period_start, &time_tm);
 	time_tm.tm_sec = 0;
 	time_tm.tm_min = 0;
 
@@ -833,7 +843,7 @@ static char *_make_archive_name(time_t period_start, time_t period_end,
 		 time_tm.tm_min,
 		 time_tm.tm_sec);
 
-	localtime_r((time_t *)&period_end, &time_tm);
+	slurm_localtime_r((time_t *)&period_end, &time_tm);
 	snprintf(end_char, sizeof(end_char),
 		 "%4.4u-%2.2u-%2.2u"
 		 "T%2.2u:%2.2u:%2.2u",

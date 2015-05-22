@@ -1,4 +1,4 @@
-.TH "cray.conf" "5" "December 2013" "cray.conf 2.6" "Slurm configuration file"
+.TH "cray.conf" "5" "Slurm Configuration File" "April 2015" "Slurm Configuration File"
 
 .SH "NAME"
 cray.conf \- Slurm configuration file for the Cray\-specific information
@@ -54,6 +54,12 @@ Fully qualified pathname to the apkill command.
 The default value is \fI/usr/bin/apkill\fR.
 
 .TP
+\fBNoAPIDSignalOnKill\fR=Yes
+When set to yes this will make it so the slurmctld will not signal the apid's
+in a batch job.  Instead it relies on the rpc coming from the slurmctld to
+kill the job to end things correctly.
+
+.TP
 \fBSDBdb\fR=<dbname>
 Name of the ALPS database.
 The default value is \fIXTAdmin\fR.
@@ -82,7 +88,6 @@ The default value is NULL, which will load the user name from the \fImy.cnf\fR f
 \fBSubAllocate\fR=Yes
 Only allocate requested node resources instead of the whole node.  In both
 cases the user will be charged for the entire node.
-This is the Slurm <=2.5 behavior.
 
 .TP
 \fBSyncTimeout\fR=<seconds>

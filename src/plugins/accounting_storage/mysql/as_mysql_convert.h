@@ -1,10 +1,10 @@
 /*****************************************************************************\
- *  src/slurmd/slurmd/xcpu.h - xcpu-based process management functions
+ *  as_mysql_convert.h - functions dealing with converting from tables in
+ *                    slurm <= 14.11.
  *****************************************************************************
- *  Copyright (C) 2006 The Regents of the University of California.
- *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
- *  Written by Morris Jette <jette1@llnl.gov>.
- *  CODE-OCEC-09-009. All rights reserved.
+ *
+ *  Copyright (C) 2015 SchedMD LLC.
+ *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
  *  For details, see <http://slurm.schedmd.com/>.
@@ -15,15 +15,15 @@
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
  *
- *  In addition, as a special exception, the copyright holders give permission 
- *  to link the code of portions of this program with the OpenSSL library under 
- *  certain conditions as described in each individual source file, and 
- *  distribute linked combinations including the two. You must obey the GNU 
- *  General Public License in all respects for all of the code used other than 
- *  OpenSSL. If you modify file(s) with this exception, you may extend this 
- *  exception to your version of the file(s), but you are not obligated to do 
+ *  In addition, as a special exception, the copyright holders give permission
+ *  to link the code of portions of this program with the OpenSSL library under
+ *  certain conditions as described in each individual source file, and
+ *  distribute linked combinations including the two. You must obey the GNU
+ *  General Public License in all respects for all of the code used other than
+ *  OpenSSL. If you modify file(s) with this exception, you may extend this
+ *  exception to your version of the file(s), but you are not obligated to do
  *  so. If you do not wish to do so, delete this exception statement from your
- *  version.  If you delete this exception statement from all source files in 
+ *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
  *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
@@ -36,19 +36,15 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _XCPU_H
-#define _XCPU_H
+#ifndef _HAVE_AS_MYSQL_CONVERT_H
+#define _HAVE_AS_MYSQL_CONVERT_H
 
-#ifdef HAVE_XCPU
+#include "accounting_storage_mysql.h"
 
-/* Identify every XCPU process in a specific node and signal it.
- * Return the process count */
-extern int xcpu_signal(int sig, char *nodes);
+extern int as_mysql_convert_event_table(mysql_conn_t *mysql_conn, char *table);
 
-#else
+extern int as_mysql_convert_usage_table(mysql_conn_t *mysql_conn, char *table);
 
-/* Just returns a zero */
-extern int xcpu_signal(int sig, char *nodes);
+extern int as_mysql_convert_tables(mysql_conn_t *mysql_conn);
 
-#endif
 #endif

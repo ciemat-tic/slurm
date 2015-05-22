@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2014 SchedMD LLC.
+ *  Portions Copyright (C) 2010-2015 SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>, Kevin Tew <tew1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -107,6 +107,7 @@
 #include "src/slurmctld/proc_req.h"
 #include "src/slurmctld/read_config.h"
 #include "src/slurmctld/reservation.h"
+#include "src/slurmctld/sicp.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/slurmctld_plugstack.h"
 #include "src/slurmctld/sched_plugin.h"
@@ -182,7 +183,7 @@ slurmctld_config_t slurmctld_config;
 diag_stats_t slurmctld_diag_stats;
 int	slurmctld_primary = 1;
 bool	want_nodes_reboot = true;
-int	with_slurmdbd = 0;
+List    cluster_tres_list = NULL;
 
 /* Local variables */
 static pthread_t assoc_cache_thread = (pthread_t) 0;
@@ -426,10 +427,6 @@ int main(int argc, char *argv[])
 		fatal( "failed to initialize ext_sensors plugin");
 	if (switch_g_slurmctld_init() != SLURM_SUCCESS )
 		fatal( "failed to initialize switch plugin");
-	if (bb_g_init() != SLURM_SUCCESS )
-		fatal( "failed to initialize burst buffer plugin");
-	if (power_g_init() != SLURM_SUCCESS )
-		fatal( "failed to initialize power management plugin");
 
 	while (1) {
 		/* initialization for each primary<->backup switch */
@@ -498,6 +495,10 @@ int main(int argc, char *argv[])
 			}
 		}
 
+
+		acct_storage_g_add_tres(acct_db_conn,
+					  slurmctld_conf.slurm_user_id, NULL);
+
 		info("Running as primary controller");
 		if ((slurmctld_config.resume_backup == false) &&
 		    (slurmctld_primary == 1)) {
@@ -516,6 +517,12 @@ int main(int argc, char *argv[])
 			fatal("failed to initialize scheduling plugin");
 		if (slurmctld_plugstack_init())
 			fatal("failed to initialize slurmctld_plugstack");
+		if (bb_g_init() != SLURM_SUCCESS )
+			fatal( "failed to initialize burst buffer plugin");
+		if (power_g_init() != SLURM_SUCCESS )
+			fatal( "failed to initialize power management plugin");
+		sicp_init();
+
 
 		/*
 		 * create attached thread to process RPCs
@@ -579,6 +586,9 @@ int main(int argc, char *argv[])
 		slurmctld_config.thread_id_sig  = (pthread_t) 0;
 		slurmctld_config.thread_id_rpc  = (pthread_t) 0;
 		slurmctld_config.thread_id_save = (pthread_t) 0;
+		bb_g_fini();
+		power_g_fini();
+		sicp_fini();
 
 		if (running_cache) {
 			/* break out and end the association cache
@@ -611,7 +621,7 @@ int main(int argc, char *argv[])
 		recover = 2;
 	}
 
-	slurm_layouts_fini();
+	layouts_fini();
 
 	/* Since pidfile is created as user root (its owner is
 	 *   changed to SlurmUser) SlurmUser may not be able to
@@ -670,8 +680,6 @@ int main(int argc, char *argv[])
 	slurm_auth_fini();
 	switch_fini();
 	route_fini();
-	bb_g_fini();
-	power_g_fini();
 
 	/* purge remaining data structures */
 	license_free();
@@ -1147,13 +1155,13 @@ static int _accounting_cluster_ready()
 	int rc = SLURM_ERROR;
 	time_t event_time = time(NULL);
 	bitstr_t *total_node_bitmap = NULL;
-	char *cluster_nodes = NULL;
+	char *cluster_nodes = NULL, *cluster_tres_str;
 	slurmctld_lock_t node_read_lock = {
 		NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK };
 
 	lock_slurmctld(node_read_lock);
 
-	set_cluster_cpus();
+	set_cluster_tres();
 
 	/* Now get the names of all the nodes on the cluster at this
 	   time and send it also.
@@ -1162,12 +1170,16 @@ static int _accounting_cluster_ready()
 	bit_nset(total_node_bitmap, 0, node_record_count-1);
 	cluster_nodes = bitmap2node_name_sortable(total_node_bitmap, 0);
 	FREE_NULL_BITMAP(total_node_bitmap);
+	cluster_tres_str = slurmdb_make_tres_string(cluster_tres_list, 1);
 	unlock_slurmctld(node_read_lock);
 
-	rc = clusteracct_storage_g_cluster_cpus(acct_db_conn,
+	rc = clusteracct_storage_g_cluster_tres(acct_db_conn,
 						cluster_nodes,
-						cluster_cpus, event_time);
+						cluster_tres_str, event_time);
+
 	xfree(cluster_nodes);
+	xfree(cluster_tres_str);
+
 	if (rc == ACCOUNTING_FIRST_REG) {
 		/* see if we are running directly to a database
 		 * instead of a slurmdbd.
@@ -1346,7 +1358,7 @@ static void _queue_reboot_msg(void)
 		node_ptr->reason = xstrdup("Scheduled reboot");
 		bit_clear(avail_node_bitmap, i);
 		bit_clear(idle_node_bitmap, i);
-		node_ptr->last_response = now;
+		node_ptr->last_response = now + slurm_get_resume_timeout();
 	}
 	if (reboot_agent_args != NULL) {
 		hostlist_uniq(reboot_agent_args->hostlist);
@@ -1386,7 +1398,6 @@ static void *_slurmctld_background(void *no_data)
 	static time_t last_ctld_bu_ping;
 	static time_t last_uid_update;
 	static time_t last_reboot_msg_time;
-	static bool ping_msg_sent = false;
 	time_t now;
 	int no_resp_msg_interval, ping_interval, purge_job_interval;
 	int group_time, group_force;
@@ -1569,21 +1580,10 @@ static void *_slurmctld_background(void *no_data)
 		     ping_nodes_now) && is_ping_done()) {
 			now = time(NULL);
 			last_ping_node_time = now;
-			ping_msg_sent = false;
 			ping_nodes_now = false;
 			lock_slurmctld(node_write_lock);
 			ping_nodes();
 			unlock_slurmctld(node_write_lock);
-		} else if ((difftime(now, last_ping_node_time) >=
-			    ping_interval) && !is_ping_done() &&
-			    !ping_msg_sent) {
-			/* log failure once per ping_nodes() call,
-			 * no error if node state update request
-			 * processed while the ping is in progress */
-			error("Node ping apparently hung, "
-			      "many nodes may be DOWN or configured "
-			      "SlurmdTimeout should be increased");
-			ping_msg_sent = true;
 		}
 
 		if (slurmctld_conf.inactive_limit &&
@@ -1779,7 +1779,8 @@ extern void ctld_assoc_mgr_init(slurm_trigger_callbacks_t *callbacks)
 	assoc_init_arg.cache_level = ASSOC_MGR_CACHE_ASSOC |
 				     ASSOC_MGR_CACHE_USER  |
 				     ASSOC_MGR_CACHE_QOS   |
-				     ASSOC_MGR_CACHE_RES;
+				     ASSOC_MGR_CACHE_RES   |
+                         	     ASSOC_MGR_CACHE_TRES;
 	if (slurmctld_conf.track_wckey)
 		assoc_init_arg.cache_level |= ASSOC_MGR_CACHE_WCKEY;
 
@@ -1853,33 +1854,108 @@ extern void send_all_to_accounting(time_t event_time)
 	send_resvs_to_accounting();
 }
 
+static int _add_node_gres_tres(void *x, void *arg)
+{
+	slurmdb_tres_rec_t *tres_rec_in = (slurmdb_tres_rec_t *)x;
+	struct node_record *node_ptr = (struct node_record *)arg;
+
+	xassert(tres_rec_in);
+
+	if (strcmp(tres_rec_in->type, "gres"))
+		return 0;
+
+	xstrfmtcat(node_ptr->tres_str, "%s%u=%"PRIu64,
+		   node_ptr->tres_str ? "," : "",
+		   tres_rec_in->id,
+		   gres_plugin_node_config_cnt(
+			   node_ptr->gres_list, tres_rec_in->name));
+
+	return 0;
+}
+
 /* A slurmctld lock needs to at least have a node read lock set before
  * this is called */
-extern void set_cluster_cpus(void)
+extern void set_cluster_tres(void)
 {
-	uint32_t cpus = 0;
 	struct node_record *node_ptr;
+	slurmdb_tres_rec_t *tres_rec, *cpu_tres = NULL, *mem_tres = NULL;
+	ListIterator itr;
 	int i;
+
+	xassert(cluster_tres_list);
+
+	itr = list_iterator_create(cluster_tres_list);
+	while ((tres_rec = list_next(itr))) {
+		if (!tres_rec->type) {
+			error("TRES %d doesn't have a type given, "
+			      "this should never happen",
+			      tres_rec->id);
+			continue; /* this should never happen */
+		}
+		/* reset them now since we are about to add to them */
+		tres_rec->count = 0;
+		if (tres_rec->id == TRES_CPU) {
+			cpu_tres = tres_rec;
+			continue;
+		} else if (tres_rec->id == TRES_MEM) {
+			mem_tres = tres_rec;
+			continue;
+		} else if (!strcmp(tres_rec->type, "gres")) {
+			tres_rec->count = gres_get_system_cnt(tres_rec->name);
+			continue;
+		} else if (!strcmp(tres_rec->type, "license")) {
+			tres_rec->count = get_total_license_cnt(
+				tres_rec->name);
+			continue;
+		}
+		/* FIXME: set up the other tres here that aren't specific */
+	}
+	list_iterator_destroy(itr);
+
+	cluster_cpus = 0;
 
 	node_ptr = node_record_table_ptr;
 	for (i = 0; i < node_record_count; i++, node_ptr++) {
+		uint64_t cpu_count = 0, mem_count = 0;
 		if (node_ptr->name == '\0')
 			continue;
+
 #ifdef SLURM_NODE_ACCT_REGISTER
-		if (slurmctld_conf.fast_schedule)
-			cpus += node_ptr->config_ptr->cpus;
-		else
-			cpus += node_ptr->cpus;
+		if (slurmctld_conf.fast_schedule) {
+			cpu_count += node_ptr->config_ptr->cpus;
+			mem_count += node_ptr->config_ptr->real_memory;
+		} else {
+			cpu_count += node_ptr->cpus;
+			mem_count += node_ptr->real_memory;
+		}
 #else
-		cpus += node_ptr->config_ptr->cpus;
+		cpu_count += node_ptr->config_ptr->cpus;
+		mem_count += node_ptr->config_ptr->real_memory;
+
 #endif
+		cluster_cpus += cpu_count;
+		if (mem_tres)
+			mem_tres->count += mem_count;
+
+		xfree(node_ptr->tres_str);
+
+		/* add the cpu tres to the node */
+		xstrfmtcat(node_ptr->tres_str, "%s%u=%"PRIu64,
+			   node_ptr->tres_str ? "," : "",
+			   TRES_CPU, cpu_count);
+
+		/* add the mem tres to the node */
+		xstrfmtcat(node_ptr->tres_str, ",%u=%"PRIu64,
+			   TRES_MEM, mem_count);
+
+		list_for_each(cluster_tres_list, _add_node_gres_tres, node_ptr);
 	}
 
-	/* Since cluster_cpus is used else where we need to keep a
-	   local var here to avoid race conditions on cluster_cpus
-	   not being correct.
-	*/
-	cluster_cpus = cpus;
+	/* FIXME: cluster_cpus probably needs to be removed and handled
+	 * differently in the spots this is used.
+	 */
+	if (cpu_tres)
+		cpu_tres->count = cluster_cpus;
 }
 
 /*
@@ -2299,7 +2375,7 @@ static void *_assoc_cache_mgr(void *no_data)
 			return NULL;
 		}
 		lock_slurmctld(job_write_lock);
-		assoc_mgr_refresh_lists(acct_db_conn);
+		assoc_mgr_refresh_lists(acct_db_conn, 0);
 		if (running_cache)
 			unlock_slurmctld(job_write_lock);
 		slurm_mutex_unlock(&assoc_cache_mutex);

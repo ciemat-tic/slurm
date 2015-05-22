@@ -61,14 +61,20 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_cred.h"
 
-#include "src/slurmd/common/xcpuinfo.h"
-
 #ifndef __USE_XOPEN_EXTENDED
 extern pid_t getsid(pid_t pid);		/* missing from <unistd.h> */
 extern pid_t getpgid(pid_t pid);
 #endif
 
 extern int devnull;
+
+/*
+ * Message aggregation types
+ */
+typedef enum {
+	WINDOW_TIME,
+	WINDOW_MSGS
+} msg_aggr_param_type_t;
 
 /*
  * Global config type
@@ -107,6 +113,8 @@ typedef struct slurmd_config {
 	uint16_t      cr_type;		/* Consumable Resource Type:       *
 					 * CR_SOCKET, CR_CORE, CR_MEMORY,  *
 					 * CR_DEFAULT, etc.                */
+	time_t        last_update;	/* last update time of the
+					 * build parameters */
 	uint16_t      mem_limit_enforce; /* enforce mem limit on running job */
 	int           nice;		/* command line nice value spec    */
 	char         *node_name;	/* node name                       */
@@ -151,8 +159,11 @@ typedef struct slurmd_config {
 	char           *acct_gather_filesystem_type; /*  */
 	char           *acct_gather_infiniband_type; /*  */
 	char           *acct_gather_profile_type; /*  */
+	char           *msg_aggr_params;      /* message aggregation params */
+	uint64_t        msg_aggr_window_msgs; /* msg aggr window size in msgs */
+	uint64_t        msg_aggr_window_time; /* msg aggr window size in time */
 	uint16_t	use_pam;
-	uint16_t	task_plugin_param; /* TaskPluginParams, expressed
+	uint32_t	task_plugin_param; /* TaskPluginParams, expressed
 					 * using cpu_bind_type_t flags */
 	uint16_t	propagate_prio;	/* PropagatePrioProcess flag       */
 

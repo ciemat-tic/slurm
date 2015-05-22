@@ -731,7 +731,12 @@ scontrol_update_job (int argc, char *argv[])
 	for (i = 0; i < argc; i++) {
 		tag = argv[i];
 		val = strchr(argv[i], '=');
-		if (val) {
+		if (! val) {
+			tag = argv[i];
+			val = argv[i + 1];
+			++i;
+			vallen = strlen(val);
+		} else if (val) {
 			taglen = val - argv[i];
 			val++;
 			vallen = strlen(val);
@@ -1030,6 +1035,17 @@ scontrol_update_job (int argc, char *argv[])
 				exit_code = 1;
 				return 0;
 			}
+			update_cnt++;
+		}
+		else if (strncasecmp(tag, "ThreadSpec", MAX(taglen, 4)) == 0) {
+			if (!strcmp(val, "-1") || !strcmp(val, "*"))
+				job_msg.core_spec = (uint16_t) INFINITE;
+			else if (parse_uint16(val, &job_msg.core_spec)) {
+				error ("Invalid ThreadSpec value: %s", val);
+				exit_code = 1;
+				return 0;
+			} else
+				job_msg.core_spec |= CORE_SPEC_THREAD;
 			update_cnt++;
 		}
 		else if (strncasecmp(tag, "ExcNodeList", MAX(taglen, 3)) == 0){

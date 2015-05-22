@@ -1,4 +1,4 @@
-.TH "SPANK" "8" "December 2014" "SPANK" "SLURM plug\-in architecture for Node and job (K)control"
+.TH SPANK "8" "Slurm Component" "April 2015" "Slurm Component"
 
 .SH "NAME"
 \fBSPANK\fR \- SLURM Plug\-in Architecture for Node and job (K)control
@@ -18,7 +18,8 @@ the \fBSPANK\fR infrastructure provides administrators and other developers
 a low cost, low effort ability to dynamically modify the runtime
 behavior of SLURM job launch.
 .LP
-\fBNote\fR: \fBSPANK\fR plugins must be recompiled for each new version.
+\fBNote\fR: \fBSPANK\fR plugins using the Slurm APIs need to be recompiled when
+upgrading Slurm to a new major release.
 .LP
 
 .SH "SPANK PLUGINS"
@@ -181,8 +182,11 @@ are (int *, char ***).
 See \fBspank.h\fR for more details, and \fBEXAMPLES\fR below for an example
 of \fBspank_get_item\fR usage.
 .LP
-\fBSPANK\fR plugins may also use the \fBspank_getenv\fR,
-\fBspank_setenv\fR, and \fBspank_unsetenv\fR functions to
+\fBSPANK\fR functions in the \fBlocal\fB and \fBallocator\fR environment should
+use the \fBgetenv\fR, \fBsetenv\fR, and \fBunsetenv\fR functions to view and
+modify the job's environment.
+\fBSPANK\fR functions in the \fBremote\fR environment should use the
+\fBspank_getenv\fR, \fBspank_setenv\fR, and \fBspank_unsetenv\fR functions to
 view and modify the job's environment. \fBspank_getenv\fR
 searches the job's environment for the environment variable
 \fIvar\fR and copies the current value into a buffer \fIbuf\fR

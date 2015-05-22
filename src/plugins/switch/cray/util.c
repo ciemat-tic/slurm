@@ -46,6 +46,7 @@
 
 #include "switch_cray.h"
 #include "slurm/slurm.h"
+#include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_step_layout.h"
 #include "src/common/xstring.h"
 

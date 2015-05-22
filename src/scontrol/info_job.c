@@ -36,12 +36,14 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-#include <sys/types.h>
-#include <sys/stat.h>
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "scontrol.h"
 #include "src/common/bitstring.h"
+#include "src/common/slurm_time.h"
 #include "src/common/stepd_api.h"
 #include "src/plugins/select/bluegene/bg_enums.h"
 
@@ -155,7 +157,7 @@ scontrol_pid_info(pid_t job_pid)
 			slurm_perror ("slurm_get_end_time error");
 		return;
 	}
-	printf("Slurm job id %u ends at %s\n", job_id, slurm_ctime(&end_time));
+	printf("Slurm job id %u ends at %s\n", job_id, slurm_ctime2(&end_time));
 
 	rem_time = slurm_get_rem_time(job_id);
 	printf("slurm_get_rem_time is %ld\n", rem_time);
@@ -965,4 +967,97 @@ extern int scontrol_job_ready(char *job_id_str)
 		rc = _wait_nodes_ready(job_id);
 
 	return rc;
+}
+
+extern int scontrol_callerid(int argc, char **argv)
+{
+	int af, ver = 4;
+	unsigned char ip_src[sizeof(struct in6_addr)],
+		      ip_dst[sizeof(struct in6_addr)];
+	uint32_t port_src, port_dst, job_id;
+	network_callerid_msg_t req;
+	char node_name[MAXHOSTNAMELEN], *ptr;
+
+	if (argc == 5) {
+		ver = strtoul(argv[4], &ptr, 0);
+		if (ptr && ptr[0]) {
+			error("Address family not an integer");
+			return SLURM_ERROR;
+		}
+	}
+
+	if (ver != 4 && ver != 6) {
+		error("Invalid address family: %d", ver);
+		return SLURM_ERROR;
+	}
+
+	af = ver == 4 ? AF_INET : AF_INET6;
+	if (!inet_pton(af, argv[0], ip_src)) {
+		error("inet_pton failed for '%s'", argv[0]);
+		return SLURM_ERROR;
+	}
+
+	port_src = strtoul(argv[1], &ptr, 0);
+	if (ptr && ptr[0]) {
+		error("Source port not an integer");
+		return SLURM_ERROR;
+	}
+
+	if (!inet_pton(af, argv[2], ip_dst)) {
+		error("scontrol_callerid: inet_pton failed for '%s'", argv[2]);
+		return SLURM_ERROR;
+	}
+
+	port_dst = strtoul(argv[3], &ptr, 0);
+	if (ptr && ptr[0]) {
+		error("Destination port not an integer");
+		return SLURM_ERROR;
+	}
+
+	memcpy(req.ip_src, ip_src, 16);
+	memcpy(req.ip_dst, ip_dst, 16);
+	req.port_src = port_src;
+	req.port_dst = port_dst;
+	req.af = af;
+
+	if (slurm_network_callerid(req, &job_id, node_name, MAXHOSTNAMELEN)
+			!= SLURM_SUCCESS) {
+		fprintf(stderr,
+			"slurm_network_callerid: unable to retrieve callerid data from remote slurmd\n");
+		return SLURM_FAILURE;
+	} else if (job_id == (uint32_t)NO_VAL) {
+		fprintf(stderr,
+			"slurm_network_callerid: remote job id indeterminate\n");
+		return SLURM_FAILURE;
+	} else {
+		printf("%u %s\n", job_id, node_name);
+		return SLURM_SUCCESS;
+	}
+}
+
+/*
+ * scontrol_print_sicp - print the inter-cluster job information
+ */
+extern void
+scontrol_print_sicp (void)
+{
+	int error_code = SLURM_SUCCESS, i;
+	sicp_info_msg_t * sicp_buffer_ptr = NULL;
+	sicp_info_t *sicp_ptr = NULL;
+
+	error_code = slurm_load_sicp(&sicp_buffer_ptr);
+	if (error_code) {
+		exit_code = 1;
+		if (quiet_flag != 1)
+			slurm_perror ("slurm_load_sicp error");
+		return;
+	}
+
+	for (i = 0, sicp_ptr = sicp_buffer_ptr->sicp_array;
+	     i < sicp_buffer_ptr->record_count; i++, sicp_ptr++) {
+		info("JobID=%u State=%s", sicp_ptr->job_id,
+		     job_state_string(sicp_ptr->job_state));
+	}
+
+	slurm_free_sicp_msg(sicp_buffer_ptr);
 }

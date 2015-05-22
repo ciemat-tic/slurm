@@ -2,16 +2,17 @@
 
 <h1>Slurm Team</h1>
 <p>Slurm development has been a joint effort of many companies and
-organizations. Over 130 individuals have contributed to the project.
+organizations around the world.
+Over 170 individuals have contributed to the project.
 Lead Slurm developers are:
 <ul>
-<li>Danny Auble (SchedMD, formerly with Lawrence Livermore National Laboratory)</li>
-<li>Morris Jette (SchedMD, formerly with Lawrence Livermore National Laboratory)</li>
+<li>Danny Auble (SchedMD)</li>
+<li>Morris Jette (SchedMD)</li>
 </ul>
 
 <p>Slurm contributors include:</p>
 <ul>
-<!-- FUNDING ORGANIZATIONS, PLEASE KEEP IN ALPHABETICAL ORDER -->
+<!-- MAJOR CONTRIBUTING ORGANIZATIONS, PLEASE KEEP IN ALPHABETICAL ORDER -->
 <li><a href="http://www.bsc.es">Barcelona Supercomputing Center</a></li>
 <li><a href="http://www.bull.com">Bull</a></li>
 <li><a href="http://www.cea.fr">CEA</a></li>
@@ -25,6 +26,7 @@ Lead Slurm developers are:
 <li><a href="http://www.nvidia.com">NVIDIA</a></li>
 <li><a href="http://www.ornl.gov">Oak Ridge National Laboratory</a></li>
 <li><a href="http://www.schedmd.com">SchedMD</a></li>
+<li><a href="http://www.sgi.com">SGI</a></li>
 <li><a href="http://www.cscs.ch">Swiss National Supercomputing Centre</a></li>
 <br><!-- INDIVIDUALS, PLEASE KEEP IN ALPHABETICAL ORDER --><br>
 <li>Daniel Ahlin (KTH, Sweden)</li>
@@ -82,6 +84,7 @@ Lead Slurm developers are:
 <li>Josh England (TGS Management Corporation)</li>
 <li>Kent Engstr&ouml;m  (National Supercomputer Centre, Sweden)</li>
 <br>
+<li>Roland Fehrenbacher (Q-Leap Networks, Germany)</li>
 <li>Carles Fenoy (Barcelona Supercomputing Center, Spain)</li>
 <li>Broi Franco (ION)</li>
 <li>Damien Fran&ccedil;ois (Universit&eacute; catholique de Louvain, Belgium)</li>
@@ -123,6 +126,7 @@ Lead Slurm developers are:
 <li>Yury Kiryanov (Intel)</li>
 <li>Aaron Knister (Environmental Protection Agency, UMBC)</li>
 <li>Marlys Kohnke (Cray)</li>
+<li>Jens Svalgaard Kohrt (University of Southern Denmark)</li>
 <li>Dorian Krause (Forschungszentrum Juelich GmbH, Germany)</li>
 <li>Nancy Kritkausky (Bull)</li>
 <li>Roman Kurakin (Institute of Natural Science and Ecology, Russia)</li>
@@ -130,6 +134,7 @@ Lead Slurm developers are:
 <li>Sam Lang</li>
 <li>Puenlap Lee (Bull)</li>
 <li>Dennis Leepow</li>
+<li>Veronique Legrand (Institut Pasteur, France)</li>
 <li>Olli-Pekka Lehto (CSC-IT Center for Science Ltd., Finland)</li>
 <li>Piotr Lesnicki (Bull)</li>
 <li>Bernard Li (Genome Sciences Centre, Canada)</li>
@@ -149,6 +154,7 @@ Lead Slurm developers are:
 <li>Pere Munt (Barcelona Supercomputing Center, Spain)</li>
 <br>
 <li>Denis Nadeau</li>
+<li>Jon Nelson (Dyn)</li>
 <li>Mark Nelson (IBM)</li>
 <li>Jim Nordby (Cray)</li>
 <li>Michal Novotny (Masaryk University, Czech Republic)</li>
@@ -166,6 +172,7 @@ Lead Slurm developers are:
 <li>Martin Perry (Bull)</li>
 <li>Dan Phung (Lawrence Livermore National Laboratory/Columbia University)</li>
 <li>Ashley Pittman (Quadrics, UK)</li>
+<li>Josko Plazonic (Princecton University)</li>
 <li>Artem Polyakov (ISP SB RAS, Russia)</li>
 <li>Ludovic Prevost (NEC, France)</li>
 <br>
@@ -189,6 +196,7 @@ Lead Slurm developers are:
 <li>Uwe Sauter (High Performance Computing Center Stuttgart, Germany)</li>
 <li>Chris Scheller (University of Michigan)</li>
 <li>Rod Schultz (Bull)</li>
+<li>Samuel Senoner (Vienna University of Technology, Austria)</li>
 <li>David Singleton</li>
 <li>Filip Skalski (University of Warsaw, Poland)</li>
 <li>Jason Sollom (Cray)</li>
@@ -196,6 +204,7 @@ Lead Slurm developers are:
 <li>Marcin Stolarek</li>
 <li>Tyler Strickland (University of Florida)</li>
 <li>Jeff Squyres (LAM MPI)</li>
+<li>Nina Suvanphim (Cray)</li>
 <br>
 <li>Prashanth Tamraparni (HP, India)</li>
 <li>Jimmy Tang (Trinity College, Ireland)</li>
@@ -220,6 +229,6 @@ Lead Slurm developers are:
 <!-- INDIVIDUALS, PLEASE KEEP IN ALPHABETICAL ORDER -->
 </ul>
 
-<p style="text-align:center;">Last modified 6 January 2015</p>
+<p style="text-align:center;">Last modified 25 Febuary 2015</p>
 
 <!--#include virtual="footer.txt"-->

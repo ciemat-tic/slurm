@@ -244,6 +244,10 @@ typedef enum {
 	REQUEST_NODE_INFO_SINGLE,  /* 2040 */
 	REQUEST_CACHE_INFO,
 	RESPONSE_CACHE_INFO,
+	REQUEST_SICP_INFO,
+	RESPONSE_SICP_INFO,
+	REQUEST_LAYOUT_INFO,
+	RESPONSE_LAYOUT_INFO,
 
 	REQUEST_UPDATE_JOB = 3001,
 	REQUEST_UPDATE_NODE,
@@ -256,6 +260,7 @@ typedef enum {
 	REQUEST_UPDATE_RESERVATION,
 	REQUEST_UPDATE_BLOCK,
 	REQUEST_UPDATE_FRONT_END,
+	REQUEST_UPDATE_LAYOUT,
 
 	REQUEST_RESOURCE_ALLOCATION = 4001,
 	RESPONSE_RESOURCE_ALLOCATION,
@@ -316,6 +321,8 @@ typedef enum {
 	REQUEST_KILL_JOB,       /* 5032 */
 	REQUEST_KILL_JOBSTEP,
 	RESPONSE_JOB_ARRAY_ERRORS,
+	REQUEST_NETWORK_CALLERID,
+	RESPONSE_NETWORK_CALLERID,
 
 	REQUEST_LAUNCH_TASKS = 6001,
 	RESPONSE_LAUNCH_TASKS,
@@ -363,6 +370,9 @@ typedef enum {
 	ACCOUNTING_UPDATE_MSG = 10001,
 	ACCOUNTING_FIRST_REG,
 	ACCOUNTING_REGISTER_CTLD,
+
+	MESSAGE_COMPOSITE = 11001,
+	RESPONSE_MESSAGE_COMPOSITE,
 } slurm_msg_type_t;
 
 typedef enum {
@@ -384,6 +394,7 @@ typedef struct forward {
 typedef struct slurm_protocol_header {
 	uint16_t version;
 	uint16_t flags;
+	uint16_t msg_index;
 	uint16_t msg_type; /* really slurm_msg_type_t but needs to be
 			      uint16_t for packing purposes. */
 	uint32_t body_length;
@@ -421,6 +432,7 @@ typedef struct slurm_msg {
 	void *data;
 	uint32_t data_size;
 	uint16_t flags;
+	uint16_t msg_index;
 	uint16_t msg_type; /* really a slurm_msg_type_t but needs to be
 			    * this way for packing purposes.  message type */
 	uint16_t protocol_version; /* DON'T PACK!  Only used if
@@ -572,6 +584,13 @@ typedef struct part_info_request_msg {
 typedef struct resv_info_request_msg {
         time_t last_update;
 } resv_info_request_msg_t;
+
+typedef struct layout_info_request_msg {
+	char* layout_type;
+	char* entities;
+	char* type;
+	uint32_t no_relation;
+} layout_info_request_msg_t;
 
 typedef struct complete_job_allocation {
 	uint32_t job_id;
@@ -779,6 +798,26 @@ typedef struct return_code2_msg {
 	char *err_msg;
 } return_code2_msg_t;
 
+/* defined in slurm.h
+typedef struct network_callerid_msg {
+	unsigned char ip_src[16];
+	unsigned char ip_dst[16];
+	uint32_t port_src;
+	uint32_t port_dst;
+	int32_t af;	// NOTE: un/packed as uint32_t
+} network_callerid_msg_t; */
+
+typedef struct network_callerid_resp {
+	uint32_t job_id;
+	uint32_t return_code;
+	char *node_name;
+} network_callerid_resp_t;
+
+typedef struct composite_msg {
+	slurm_addr_t sender;	/* address of sending node/port */
+	List	 msg_list;
+} composite_msg_t;
+
 /* Note: We include the node list here for reliable cleanup on XCPU systems.
  *
  * Note: We include select_jobinfo here in addition to the job launch
@@ -840,18 +879,21 @@ typedef struct reattach_tasks_response_msg {
 } reattach_tasks_response_msg_t;
 
 typedef struct prolog_launch_msg {
-	uint32_t job_id;		/* slurm job_id */
-	uint32_t uid;
-	uint32_t gid;
 	char *alias_list;		/* node name/address/hostnamne aliases */
+	slurm_cred_t *cred;
+	uint32_t gid;
+	uint32_t job_id;		/* slurm job_id */
+	uint32_t job_mem_limit;		/* job's memory limit, passed via cred */
+	uint32_t nnodes;			/* count of nodes, passed via cred */
 	char *nodes;			/* list of nodes allocated to job_step */
 	char *partition;		/* partition the job is running in */
+	dynamic_plugin_data_t *select_jobinfo;	/* opaque data type */
+	char **spank_job_env;		/* SPANK job environment variables */
+	uint32_t spank_job_env_size;	/* size of spank_job_env */
 	char *std_err;			/* pathname of stderr */
 	char *std_out;			/* pathname of stdout */
+	uint32_t uid;
 	char *work_dir;			/* full pathname of working directory */
-	char **spank_job_env;	/* SPANK job environment variables */
-	uint32_t spank_job_env_size;			/* size of spank_job_env */
-	dynamic_plugin_data_t *select_jobinfo;	/* opaque data type */
 } prolog_launch_msg_t;
 
 typedef struct batch_job_launch_msg {
@@ -1115,6 +1157,7 @@ extern void slurm_destroy_uint32_ptr(void *object);
 /* here to add \\ to all \" in a string this needs to be xfreed later */
 extern char *slurm_add_slash_to_quotes(char *str);
 extern int slurm_addto_char_list(List char_list, char *names);
+extern int slurm_addto_step_list(List step_list, char *names);
 extern int slurm_sort_char_list_asc(void *, void *);
 extern int slurm_sort_char_list_desc(void *, void *);
 
@@ -1146,6 +1189,8 @@ extern void slurm_free_priority_factors_request_msg(
 extern void slurm_free_priority_factors_response_msg(
 	priority_factors_response_msg_t *msg);
 extern void slurm_free_forward_data_msg(forward_data_msg_t *msg);
+extern void slurm_free_comp_msg_list(void *x);
+extern void slurm_free_composite_msg(composite_msg_t *msg);
 extern void slurm_free_ping_slurmd_resp(ping_slurmd_resp_msg_t *msg);
 
 #define	slurm_free_timelimit_msg(msg) \
@@ -1175,6 +1220,7 @@ extern void slurm_free_job_launch_msg(batch_job_launch_msg_t * msg);
 
 extern void slurm_free_update_front_end_msg(update_front_end_msg_t * msg);
 extern void slurm_free_update_node_msg(update_node_msg_t * msg);
+extern void slurm_free_update_layout_msg(update_layout_msg_t * msg);
 extern void slurm_free_update_part_msg(update_part_msg_t * msg);
 extern void slurm_free_delete_part_msg(delete_part_msg_t * msg);
 extern void slurm_free_resv_desc_msg(resv_desc_msg_t * msg);
@@ -1222,6 +1268,8 @@ extern void slurm_free_checkpoint_resp_msg(checkpoint_resp_msg_t *msg);
 extern void slurm_free_suspend_msg(suspend_msg_t *msg);
 extern void slurm_free_suspend_int_msg(suspend_int_msg_t *msg);
 extern void slurm_free_update_step_msg(step_update_request_msg_t * msg);
+extern void slurm_free_resource_allocation_response_msg_members (
+	resource_allocation_response_msg_t * msg);
 extern void slurm_free_resource_allocation_response_msg (
 		resource_allocation_response_msg_t * msg);
 extern void slurm_free_job_alloc_info_response_msg (
@@ -1241,6 +1289,8 @@ extern void slurm_free_node_info_msg(node_info_msg_t * msg);
 extern void slurm_free_node_info_members(node_info_t * node);
 extern void slurm_free_partition_info_msg(partition_info_msg_t * msg);
 extern void slurm_free_partition_info_members(partition_info_t * part);
+extern void slurm_free_layout_info_msg(layout_info_msg_t * msg);
+extern void slurm_free_layout_info_request_msg(layout_info_request_msg_t * msg);
 extern void slurm_free_reservation_info_msg(reserve_info_msg_t * msg);
 extern void slurm_free_get_kvs_msg(kvs_get_msg_t *msg);
 extern void slurm_free_will_run_response_msg(will_run_response_msg_t *msg);
@@ -1270,6 +1320,11 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data);
 extern void slurm_free_license_info_request_msg(license_info_request_msg_t *msg);
 extern uint32_t slurm_get_return_code(slurm_msg_type_t type, void *data);
 extern void slurm_free_cache_info_request_msg(cache_info_request_msg_t *);
+extern void slurm_free_network_callerid_msg(network_callerid_msg_t *mesg);
+extern void slurm_free_network_callerid_resp(network_callerid_resp_t *resp);
+
+extern int  slurm_load_sicp(sicp_info_msg_t **sicp_buffer_pptr);
+extern void slurm_free_sicp_msg(sicp_info_msg_t * sicp_buffer_ptr);
 
 extern char *preempt_mode_string(uint16_t preempt_mode);
 extern uint16_t preempt_mode_num(const char *preempt_mode);
@@ -1292,6 +1347,10 @@ extern char *job_state_string_compact(uint16_t inx);
 extern int   job_state_num(const char *state_name);
 extern char *node_state_string(uint32_t inx);
 extern char *node_state_string_compact(uint32_t inx);
+
+extern uint16_t power_flags_id(char *power_flags);
+extern char    *power_flags_str(uint16_t power_flags);
+
 extern void  private_data_string(uint16_t private_data, char *str, int str_len);
 extern void  accounting_enforce_string(uint16_t enforce,
 				       char *str, int str_len);
@@ -1323,13 +1382,6 @@ extern char *priority_flags_string(uint16_t priority_flags);
 /* user needs to xfree return value */
 extern char *reservation_flags_string(uint32_t flags);
 
-/* Return ctime like string without the newline.
- * Not thread safe */
-extern char *slurm_ctime(const time_t *timep);
-
-/* Return ctime like string without the newline, thread safe. */
-extern char *slurm_ctime_r(const time_t *timep, char *time_str);
-
 /* Given a protocol opcode return its string
  * description mapping the slurm_msg_type_t
  * to its name.
@@ -1342,9 +1394,11 @@ extern char *rpc_num2string(uint16_t opcode);
 		int rc;							\
 		while (remaining > 0) {					\
 			rc = read(fd, ptr, remaining);			\
-			if ((rc == 0) && (remaining == size))		\
+			if ((rc == 0) && (remaining == size)) {		\
+				debug("%s:%d: %s: safe_read EOF",	\
+				      __FILE__, __LINE__, __CURRENT_FUNC__); \
 				goto rwfail;				\
-			else if (rc == 0) {				\
+			} else if (rc == 0) {				\
 				debug("%s:%d: %s: safe_read (%d of %d) EOF", \
 				      __FILE__, __LINE__, __CURRENT_FUNC__, \
 				      remaining, (int)size);		\

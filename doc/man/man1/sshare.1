@@ -1,4 +1,4 @@
-.TH SSHARE "1" "March 2012" "sshare 2.0" "SLURM Commands"
+.TH sshare "1" "Slurm Commands" "April 2015" "Slurm Commands"
 
 .SH "NAME"
 sshare \- Tool for listing the shares of associations to a cluster.
@@ -51,6 +51,11 @@ Output will be '|' delimited without a '|' at the end.
 .TP
 \fB\-u\fR, \fB\-\-users=\fR
 Display information for specific users (comma separated list).
+
+.TP
+\fB\-U\fR, \fB\-\-Users\fR
+If specified only the users information are printed, the parent
+and ancestors are not displayed.
 
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR

@@ -3,6 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
+ *  Portions Copyright (C) 2010-2015 SchedMD LLC <http://www.schedmd.com>
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <grondona1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -123,6 +124,9 @@
 #define OPT_TIME_VAL    0x18
 #define OPT_CPU_FREQ    0x19
 #define OPT_CORE_SPEC   0x1a
+#define OPT_SICP        0x1b
+#define OPT_POWER       0x1c
+#define OPT_THREAD_SPEC 0x1d
 #define OPT_PROFILE     0x20
 #define OPT_EXPORT	0x21
 #define OPT_HINT	0x22
@@ -131,7 +135,6 @@
 #define LONG_OPT_HELP        0x100
 #define LONG_OPT_USAGE       0x101
 #define LONG_OPT_XTO         0x102
-#define LONG_OPT_LAUNCH      0x103
 #define LONG_OPT_TIMEO       0x104
 #define LONG_OPT_JOBID       0x105
 #define LONG_OPT_TMP         0x106
@@ -142,8 +145,11 @@
 #define LONG_OPT_GID         0x10b
 #define LONG_OPT_MPI         0x10c
 #define LONG_OPT_RESV_PORTS  0x10d
+#define LONG_OPT_SICP        0x10e
+#define LONG_OPT_POWER       0x10f
 #define LONG_OPT_DEBUG_TS    0x110
 #define LONG_OPT_CONNTYPE    0x111
+#define LONG_OPT_THREAD_SPEC 0x112
 #define LONG_OPT_TEST_ONLY   0x113
 #define LONG_OPT_NETWORK     0x114
 #define LONG_OPT_EXCLUSIVE   0x115
@@ -368,7 +374,7 @@ static void argerror(const char *msg, ...)
 /*
  * _opt_default(): used by initialize_and_process_args to set defaults
  */
-static void _opt_default()
+static void _opt_default(void)
 {
 	char buf[MAXPATHLEN + 1];
 	int i;
@@ -482,12 +488,11 @@ static void _opt_default()
 	opt.hostfile	    = NULL;
 	opt.nodelist	    = NULL;
 	opt.exc_nodes	    = NULL;
-	opt.max_launch_time = 120;/* 120 seconds to launch job             */
 	opt.max_exit_timeout= 60; /* Warn user 60 seconds after task exit */
 	/* Default launch msg timeout           */
 	opt.msg_timeout     = slurm_get_msg_timeout();
 
-	for (i=0; i<HIGHEST_DIMENSIONS; i++) {
+	for (i = 0; i < HIGHEST_DIMENSIONS; i++) {
 		opt.conn_type[i]    = (uint16_t) NO_VAL;
 		opt.geometry[i]	    = 0;
 	}
@@ -515,7 +520,6 @@ static void _opt_default()
 	 * Reset some default values if running under a parallel debugger
 	 */
 	if ((opt.parallel_debug = _under_parallel_debugger())) {
-		opt.max_launch_time = 120;
 		opt.max_threads     = 1;
 		pmi_server_max_threads(opt.max_threads);
 		opt.msg_timeout     = 15;
@@ -536,6 +540,8 @@ static void _opt_default()
 
 	opt.nice = 0;
 	opt.priority = 0;
+	opt.sicp_mode = 0;
+	opt.power_flags = 0;
 }
 
 /*---[ env var processing ]-----------------------------------------------*/
@@ -606,14 +612,17 @@ env_vars_t env_vars[] = {
 {"SLURM_OPEN_MODE",     OPT_OPEN_MODE,  NULL,               NULL             },
 {"SLURM_OVERCOMMIT",    OPT_OVERCOMMIT, NULL,               NULL             },
 {"SLURM_PARTITION",     OPT_STRING,     &opt.partition,     NULL             },
+{"SLURM_POWER",         OPT_POWER,      NULL,               NULL             },
 {"SLURM_PROFILE",       OPT_PROFILE,    NULL,               NULL             },
 {"SLURM_PROLOG",        OPT_STRING,     &opt.prolog,        NULL             },
 {"SLURM_QOS",           OPT_STRING,     &opt.qos,           NULL             },
 {"SLURM_RAMDISK_IMAGE", OPT_STRING,     &opt.ramdiskimage,  NULL             },
 {"SLURM_REMOTE_CWD",    OPT_STRING,     &opt.cwd,           NULL             },
+{"SLURM_REQ_SWITCH",    OPT_INT,        &opt.req_switch,    NULL             },
 {"SLURM_RESERVATION",   OPT_STRING,     &opt.reservation,   NULL             },
 {"SLURM_RESTART_DIR",   OPT_STRING,     &opt.restart_dir ,  NULL             },
 {"SLURM_RESV_PORTS",    OPT_RESV_PORTS, NULL,               NULL             },
+{"SLURM_SICP",          OPT_SICP,       NULL,               NULL             },
 {"SLURM_SIGNAL",        OPT_SIGNAL,     NULL,               NULL             },
 {"SLURM_SRUN_MULTI",    OPT_MULTI,      NULL,               NULL             },
 {"SLURM_STDERRMODE",    OPT_STRING,     &opt.efname,        NULL             },
@@ -621,14 +630,14 @@ env_vars_t env_vars[] = {
 {"SLURM_STDOUTMODE",    OPT_STRING,     &opt.ofname,        NULL             },
 {"SLURM_TASK_EPILOG",   OPT_STRING,     &opt.task_epilog,   NULL             },
 {"SLURM_TASK_PROLOG",   OPT_STRING,     &opt.task_prolog,   NULL             },
+{"SLURM_THREAD_SPEC",   OPT_THREAD_SPEC,NULL,               NULL             },
 {"SLURM_THREADS",       OPT_INT,        &opt.max_threads,   NULL             },
 {"SLURM_TIMELIMIT",     OPT_STRING,     &opt.time_limit_str,NULL             },
 {"SLURM_UNBUFFEREDIO",  OPT_INT,        &opt.unbuffered,    NULL             },
 {"SLURM_WAIT",          OPT_INT,        &opt.max_wait,      NULL             },
+{"SLURM_WAIT4SWITCH",   OPT_TIME_VAL,   NULL,               NULL             },
 {"SLURM_WCKEY",         OPT_STRING,     &opt.wckey,         NULL             },
 {"SLURM_WORKING_DIR",   OPT_STRING,     &opt.cwd,           &opt.cwd_set     },
-{"SLURM_REQ_SWITCH",    OPT_INT,        &opt.req_switch,    NULL             },
-{"SLURM_WAIT4SWITCH",   OPT_TIME_VAL,   NULL,               NULL             },
 {NULL, 0, NULL, NULL}
 };
 
@@ -638,7 +647,7 @@ env_vars_t env_vars[] = {
  *            environment variables. See comments above for how to
  *            extend srun to process different vars
  */
-static void _opt_env()
+static void _opt_env(void)
 {
 	char       *val = NULL;
 	env_vars_t *e   = env_vars;
@@ -733,8 +742,15 @@ _process_env_var(env_vars_t *e, const char *val)
 		break;
 
 	case OPT_EXCLUSIVE:
-		opt.exclusive = true;
-		opt.shared = 0;
+		if (val == NULL) {
+			opt.exclusive = true;
+			opt.shared = 0;
+		} else if (!strcasecmp(val, "user")) {
+			opt.shared = 2;
+		} else {
+			error("\"%s=%s\" -- invalid value, ignoring...",
+			      e->var, val);
+		}
 		break;
 
 	case OPT_EXPORT:
@@ -806,6 +822,16 @@ _process_env_var(env_vars_t *e, const char *val)
 	case OPT_PROFILE:
 		opt.profile = acct_gather_profile_from_string((char *)val);
 		break;
+	case OPT_POWER:
+		opt.power_flags = power_flags_id((char *)val);
+		break;
+	case OPT_SICP:
+		opt.sicp_mode = 1;
+		break;
+	case OPT_THREAD_SPEC:
+		opt.core_spec = _get_int(val, "thread_spec", true) |
+					 CORE_SPEC_THREAD;
+		break;
 	default:
 		/* do nothing */
 		break;
@@ -830,8 +856,10 @@ _get_int(const char *arg, const char *what, bool positive)
 		exit(error_exit);
 	} else if (result > INT_MAX) {
 		error ("Numeric argument (%ld) to big for %s.", result, what);
+		exit(error_exit);
 	} else if (result < INT_MIN) {
 		error ("Numeric argument %ld to small for %s.", result, what);
+		exit(error_exit);
 	}
 
 	return (int) result;
@@ -898,7 +926,7 @@ static void _set_options(const int argc, char **argv)
 		{"cpu-freq",         required_argument, 0, LONG_OPT_CPU_FREQ},
 		{"debugger-test",    no_argument,       0, LONG_OPT_DEBUG_TS},
 		{"epilog",           required_argument, 0, LONG_OPT_EPILOG},
-		{"exclusive",        no_argument,       0, LONG_OPT_EXCLUSIVE},
+		{"exclusive",        optional_argument, 0, LONG_OPT_EXCLUSIVE},
 		{"export",           required_argument, 0, LONG_OPT_EXPORT},
 		{"get-user-env",     optional_argument, 0, LONG_OPT_GET_USER_ENV},
 		{"gid",              required_argument, 0, LONG_OPT_GID},
@@ -909,11 +937,10 @@ static void _set_options(const int argc, char **argv)
 		{"jobid",            required_argument, 0, LONG_OPT_JOBID},
 		{"linux-image",      required_argument, 0, LONG_OPT_LINUX_IMAGE},
 		{"launch-cmd",       no_argument,       0, LONG_OPT_LAUNCH_CMD},
-		{"launcher-opts",      required_argument, 0, LONG_OPT_LAUNCHER_OPTS},
+		{"launcher-opts",    required_argument, 0, LONG_OPT_LAUNCHER_OPTS},
 		{"mail-type",        required_argument, 0, LONG_OPT_MAIL_TYPE},
 		{"mail-user",        required_argument, 0, LONG_OPT_MAIL_USER},
 		{"max-exit-timeout", required_argument, 0, LONG_OPT_XTO},
-		{"max-launch-time",  required_argument, 0, LONG_OPT_LAUNCH},
 		{"mem",              required_argument, 0, LONG_OPT_MEM},
 		{"mem-per-cpu",      required_argument, 0, LONG_OPT_MEM_PER_CPU},
 		{"mem_bind",         required_argument, 0, LONG_OPT_MEM_BIND},
@@ -931,6 +958,7 @@ static void _set_options(const int argc, char **argv)
 		{"ntasks-per-node",  required_argument, 0, LONG_OPT_NTASKSPERNODE},
 		{"ntasks-per-socket",required_argument, 0, LONG_OPT_NTASKSPERSOCKET},
 		{"open-mode",        required_argument, 0, LONG_OPT_OPEN_MODE},
+		{"power",            required_argument, 0, LONG_OPT_POWER},
 		{"priority",         required_argument, 0, LONG_OPT_PRIORITY},
 		{"profile",          required_argument, 0, LONG_OPT_PROFILE},
 		{"prolog",           required_argument, 0, LONG_OPT_PROLOG},
@@ -943,6 +971,7 @@ static void _set_options(const int argc, char **argv)
 		{"restart-dir",      required_argument, 0, LONG_OPT_RESTART_DIR},
 		{"resv-ports",       optional_argument, 0, LONG_OPT_RESV_PORTS},
 		{"runjob-opts",      required_argument, 0, LONG_OPT_LAUNCHER_OPTS},
+		{"sicp",             optional_argument, 0, LONG_OPT_SICP},
 		{"signal",	     required_argument, 0, LONG_OPT_SIGNAL},
 		{"slurmd-debug",     required_argument, 0, LONG_OPT_DEBUG_SLURMD},
 		{"sockets-per-node", required_argument, 0, LONG_OPT_SOCKETSPERNODE},
@@ -951,6 +980,7 @@ static void _set_options(const int argc, char **argv)
 		{"task-prolog",      required_argument, 0, LONG_OPT_TASK_PROLOG},
 		{"tasks-per-node",   required_argument, 0, LONG_OPT_NTASKSPERNODE},
 		{"test-only",        no_argument,       0, LONG_OPT_TEST_ONLY},
+		{"thread-spec",      required_argument, 0, LONG_OPT_THREAD_SPEC},
 		{"time-min",         required_argument, 0, LONG_OPT_TIME_MIN},
 		{"threads-per-core", required_argument, 0, LONG_OPT_THREADSPERCORE},
 		{"tmp",              required_argument, 0, LONG_OPT_TMP},
@@ -1216,8 +1246,15 @@ static void _set_options(const int argc, char **argv)
 			opt.contiguous = true;
 			break;
                 case LONG_OPT_EXCLUSIVE:
-			opt.exclusive = true;
-                        opt.shared = 0;
+			if (optarg == NULL) {
+				opt.exclusive = true;
+				opt.shared = 0;
+			} else if (!strcasecmp(optarg, "user")) {
+				opt.shared = 2;
+			} else {
+				error("invalid exclusive option %s", optarg);
+				exit(error_exit);
+			}
                         break;
 		case LONG_OPT_EXPORT:
 			xfree(opt.export_env);
@@ -1321,10 +1358,6 @@ static void _set_options(const int argc, char **argv)
 			opt.msg_timeout =
 				_get_int(optarg, "msg-timeout", true);
 			break;
-		case LONG_OPT_LAUNCH:
-			opt.max_launch_time =
-				_get_int(optarg, "max-launch-time", true);
-			break;
 		case LONG_OPT_XTO:
 			opt.max_exit_timeout =
 				_get_int(optarg, "max-exit-timeout", true);
@@ -1361,7 +1394,6 @@ static void _set_options(const int argc, char **argv)
 			/* make other parameters look like debugger
 			 * is really attached */
 			opt.parallel_debug   = true;
-			opt.max_launch_time = 120;
 			opt.max_threads     = 1;
 			pmi_server_max_threads(opt.max_threads);
 			opt.msg_timeout     = 15;
@@ -1648,6 +1680,16 @@ static void _set_options(const int argc, char **argv)
 			opt.req_switch = _get_int(optarg, "switches",
 				true);
 			break;
+		case LONG_OPT_POWER:
+			opt.power_flags = power_flags_id(optarg);
+			break;
+		case LONG_OPT_SICP:
+			opt.sicp_mode = 1;
+			break;
+		case LONG_OPT_THREAD_SPEC:
+			opt.core_spec = _get_int(optarg, "thread_spec", true) |
+					CORE_SPEC_THREAD;
+			break;
 		default:
 			if (spank_process_option (opt_char, optarg) < 0) {
 				exit(error_exit);
@@ -1673,6 +1715,8 @@ static void _opt_args(int argc, char **argv)
 {
 	int i, command_pos = 0, command_args = 0;
 	char **rest = NULL;
+	char *fullpath, *launch_params;
+	bool test_exec = false;
 
 	_set_options(argc, argv);
 
@@ -1790,7 +1834,8 @@ static void _opt_args(int argc, char **argv)
 
 #endif
 	/* make sure we have allocated things correctly */
-	xassert((command_pos + command_args) <= opt.argc);
+	if (command_args)
+		xassert((command_pos + command_args) <= opt.argc);
 
 	for (i = command_pos; i < opt.argc; i++) {
 		if (!rest || !rest[i-command_pos])
@@ -1799,21 +1844,36 @@ static void _opt_args(int argc, char **argv)
 	}
 	opt.argv[i] = NULL;	/* End of argv's (for possible execv) */
 
+	if (getenv("SLURM_TEST_EXEC")) {
+		test_exec = true;
+	} else {
+		launch_params = slurm_get_launch_params();
+		if (launch_params && strstr(launch_params, "test_exec"))
+			test_exec = true;
+		xfree(launch_params);
+	}
 #if defined HAVE_BG && !defined HAVE_BG_L_P
 	/* BGQ's runjob command required a fully qualified path */
 	if (!launch_g_handle_multi_prog_verify(command_pos) &&
 	    (opt.argc > command_pos)) {
-		char *fullpath;
-
 		if ((fullpath = search_path(opt.cwd,
 					    opt.argv[command_pos],
-					    false, X_OK))) {
+					    false, X_OK, test_exec))) {
 			xfree(opt.argv[command_pos]);
 			opt.argv[command_pos] = fullpath;
 		}
 	}
 #else
 	(void) launch_g_handle_multi_prog_verify(command_pos);
+	if (test_exec) {
+		if ((fullpath = search_path(opt.cwd, opt.argv[command_pos],
+					    false, X_OK, test_exec))) {
+			xfree(opt.argv[command_pos]);
+			opt.argv[command_pos] = fullpath;
+		} else {
+			fatal("Can not execute %s", opt.argv[command_pos]);
+		}
+	}
 #endif
 
 #if 0
@@ -2204,7 +2264,7 @@ extern void init_spank_env(void)
 	if (environ == NULL)
 		return;
 
-	for (i=0; environ[i]; i++) {
+	for (i = 0; environ[i]; i++) {
 		if (strncmp(environ[i], "SLURM_SPANK_", 12))
 			continue;
 		name = xstrdup(environ[i] + 12);
@@ -2238,7 +2298,7 @@ extern char *spank_get_job_env(const char *name)
 	xstrcat(tmp_str, "=");
 	len = strlen(tmp_str);
 
-	for (i=0; i<opt.spank_job_env_size; i++) {
+	for (i = 0; i < opt.spank_job_env_size; i++) {
 		if (strncmp(opt.spank_job_env[i], tmp_str, len))
 			continue;
 		xfree(tmp_str);
@@ -2265,7 +2325,7 @@ extern int   spank_set_job_env(const char *name, const char *value,
 	len = strlen(tmp_str);
 	xstrcat(tmp_str, value);
 
-	for (i=0; i<opt.spank_job_env_size; i++) {
+	for (i = 0; i < opt.spank_job_env_size; i++) {
 		if (strncmp(opt.spank_job_env[i], tmp_str, len))
 			continue;
 		if (overwrite) {
@@ -2298,11 +2358,11 @@ extern int   spank_unset_job_env(const char *name)
 	xstrcat(tmp_str, "=");
 	len = strlen(tmp_str);
 
-	for (i=0; i<opt.spank_job_env_size; i++) {
+	for (i = 0; i < opt.spank_job_env_size; i++) {
 		if (strncmp(opt.spank_job_env[i], tmp_str, len))
 			continue;
 		xfree(opt.spank_job_env[i]);
-		for (j=(i+1); j<opt.spank_job_env_size; i++, j++)
+		for (j = (i+1); j < opt.spank_job_env_size; i++, j++)
 			opt.spank_job_env[i] = opt.spank_job_env[j];
 		opt.spank_job_env_size--;
 		if (opt.spank_job_env_size == 0)
@@ -2317,7 +2377,7 @@ extern int   spank_unset_job_env(const char *name)
  *
  * warning: returns pointer to memory allocated on the stack.
  */
-static char *print_constraints()
+static char *print_constraints(void)
 {
 	char *buf = xstrdup("");
 
@@ -2483,9 +2543,17 @@ static void _opt_list(void)
 	info("ntasks-per-socket : %d", opt.ntasks_per_socket);
 	info("ntasks-per-core   : %d", opt.ntasks_per_core);
 	info("plane_size        : %u", opt.plane_size);
-	info("core-spec         : %d", opt.core_spec);
+	if (opt.core_spec == (uint16_t) NO_VAL)
+		info("core-spec         : NA");
+	else if (opt.core_spec & CORE_SPEC_THREAD) {
+		info("thread-spec       : %d",
+		     opt.core_spec & (~CORE_SPEC_THREAD));
+	} else
+		info("core-spec         : %d", opt.core_spec);
 	if (opt.resv_port_cnt != NO_VAL)
 		info("resv_port_cnt     : %d", opt.resv_port_cnt);
+	info("power             : %s", power_flags_str(opt.power_flags));
+	info("sicp              : %u", opt.sicp_mode);
 	str = print_commandline(opt.argc, opt.argv);
 	info("remote command    : `%s'", str);
 	xfree(str);
@@ -2543,9 +2611,9 @@ static void _usage(void)
 "            [--prolog=fname] [--epilog=fname]\n"
 "            [--task-prolog=fname] [--task-epilog=fname]\n"
 "            [--ctrl-comm-ifhn=addr] [--multi-prog]\n"
-"            [--cpu-freq=<min[-max[:gov]]>\n"
-"            [--switches=max-switches{@max-time-to-wait}]\n"
-"            [--core-spec=cores] [--reboot] [--bb=burst_buffer_spec]\n"
+"            [--cpu-freq=min[-max[:gov]] [--sicp] [--power=flags]\n"
+"            [--switches=max-switches{@max-time-to-wait}] [--reboot]\n"
+"            [--core-spec=cores] [--thread-spec=threads] [--bb=burst_buffer_spec]\n"
 "            [--acctg-freq=<datatype>=<interval>\n"
 "            [-w hosts...] [-x hosts...] executable [args...]\n");
 
@@ -2571,7 +2639,7 @@ static void _help(void)
 "      --checkpoint-dir=dir    directory to store job step checkpoint image \n"
 "                              files\n"
 "      --comment=name          arbitrary comment\n"
-"      --cpu-freq=<min[-max[:gov]]> requested cpu frequency (and governor)\n"
+"      --cpu-freq=min[-max[:gov]] requested cpu frequency (and governor)\n"
 "  -d, --dependency=type:jobid defer job until condition on jobid is satisfied\n"
 "  -D, --chdir=path            change remote current working directory\n"
 "      --export=env_vars|NONE  environment variables passed to launcher with\n"
@@ -2610,6 +2678,7 @@ static void _help(void)
 "  -o, --output=out            location of stdout redirection\n"
 "  -O, --overcommit            overcommit resources\n"
 "  -p, --partition=partition   partition requested\n"
+"      --power=flags           power management options\n"
 "      --priority=value        set the priority of the job to value\n"
 "      --prolog=program        run \"program\" before launching job step\n"
 "      --profile=value         enable acct_gather_profile for detailed data\n"
@@ -2627,6 +2696,8 @@ static void _help(void)
 "      --restart-dir=dir       directory of checkpoint image files to restart\n"
 "                              from\n"
 "  -s, --share                 share nodes with other jobs\n"
+"      --sicp                  If specified, signifies job is to receive\n"
+"                              job id from the incluster reserve range.\n"
 "  -S, --core-spec=cores       count of reserved cores\n"
 "      --signal=[B:]num[@time] send signal when time limit within time seconds\n"
 "      --slurmd-debug=level    slurmd debug level\n"
@@ -2634,6 +2705,7 @@ static void _help(void)
 "                              Optimum switches and max time to wait for optimum\n"
 "      --task-epilog=program   run \"program\" after launching task\n"
 "      --task-prolog=program   run \"program\" before launching task\n"
+"      --thread-spec=threads   count of reserved threads\n"
 "  -T, --threads=threads       set srun launch fanout\n"
 "  -t, --time=minutes          time limit\n"
 "      --time-min=minutes      minimum time limit (if distinct)\n"
@@ -2657,7 +2729,7 @@ static void _help(void)
 "  -Z, --no-allocate           don't allocate nodes (must supply -w)\n"
 "\n"
 "Consumable resources related options:\n"
-"      --exclusive             allocate nodes in exclusive mode when\n"
+"      --exclusive[=user]      allocate nodes in exclusive mode when\n"
 "                              cpu consumable resource is enabled\n"
 "                              or don't share CPUs for job steps\n"
 "      --mem-per-cpu=MB        maximum amount of real memory per allocated\n"

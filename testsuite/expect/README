@@ -1,7 +1,7 @@
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008-2011 Lawrence Livermore National Security.
-# Copyright (C) 2010-2014 SchedMD LLC
+# Copyright (C) 2010-2015 SchedMD LLC
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 # Written by Morris Jette <jette1@llnl.gov>
 # Additions by Joseph Donaghy <donaghy1@llnl.gov>
@@ -237,6 +237,7 @@ test2.21   Validate scontrol requeue of failed or completed job.
 test2.22   Validate scontrol requeuehold requeues job to held pending state.
 test2.23   Validate scontrol requeuehold State=SpecialExit.
 test2.24   Validate the scontrol write config creates accurate config
+test2.25   Validate scontrol show cache command.
 
 
 test3.#    Testing of scontrol options (best run as SlurmUser or root).
@@ -311,8 +312,8 @@ test6.10   Validate scancel user and partition filters, delete all remaining
 test6.11   Validate scancel quiet option, no warning if job gone
 	   (--quiet option).
 test6.12   Test scancel signal to batch script (--batch option)
-test6.13   Test routing all signals through slurmctld rather than directly
-	   to slurmd (undocumented --ctld option).
+test6.13   Test routing all signals through slurmctld rather than slurmd
+	   (undocumented --ctld option).
 test6.14   Test scancel nodelist option (--nodelist or -w)
 
 
@@ -453,6 +454,7 @@ test14.7   Test sbcast security issues.
 test14.8   Test sbcast transmission buffer options (--size and
 	   --fanout options).
 test14.9   Verify that an sbcast credential is properly validated.
+test14.10  Validate sbcast for a job step allocation (subset of job allocation).
 
 test15.#   Testing of salloc options.
 =====================================
@@ -558,6 +560,7 @@ test17.35  Test performance/timing of job submissions.
 test17.36  Test that the shared option in partitions is enforced.
 test17.37  Validate that afternotok dependency is enforced.
 test17.38  Test for sbatch --signal.
+test17.39  Validate dependecy OR option
 
 
 test19.#   Testing of strigger options.
@@ -586,6 +589,7 @@ test20.8   Test the qalter -N option for changing the name of a job.
 test20.9   Test for the qalter --man option
 test20.10  Test for the qrerun --help option
 test20.11  Test for the qrerun --man option
+test20.12  Test for qsub -V/-v arguments and their interaction with sbatch scripts
 
 
 test21.#   Testing of sacctmgr commands and options.

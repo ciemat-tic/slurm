@@ -90,15 +90,12 @@ static uint64_t debug_flags = 0;
  * of how this plugin satisfies that application.  SLURM will only load
  * a task plugin if the plugin_type string has a prefix of "task/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "task CRAY plugin";
 const char plugin_type[]        = "task/cray";
-const uint32_t plugin_version   = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 #ifdef HAVE_NATIVE_CRAY
 #ifdef HAVE_NUMA
@@ -146,6 +143,9 @@ static int track_status = 1;
 
 // Environment variable telling PMI not to fork
 #define PMI_NO_FORK_ENV "PMI_NO_FORK"
+
+// Environment variable providing the apid using a common name
+#define ALPS_APP_ID_ENV "ALPS_APP_ID"
 
 // File containing the number of currently running Slurm steps
 #define NUM_STEPS_FILE	TASK_CRAY_RUN_DIR"/slurm_num_steps"
@@ -298,9 +298,11 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 {
 #ifdef HAVE_NATIVE_CRAY
 	int rc;
+	uint64_t apid;
 
-	debug("task_p_pre_launch: %u.%u, task %d",
-	      job->jobid, job->stepid, job->envtp->procid);
+	apid = SLURM_ID_HASH(job->jobid, job->stepid);
+	debug("task_p_pre_launch: %u.%u, apid %"PRIu64", task %d",
+	      job->jobid, job->stepid, apid, job->envtp->procid);
 
 	/*
 	 * Send the rank to the application's PMI layer via an environment
@@ -331,6 +333,17 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 		CRAY_ERR("Failed to set env variable %s",
 			 LLI_STATUS_OFFS_ENV);
 		return SLURM_ERROR;
+	}
+
+	/*
+	 * Set the ALPS_APP_ID environment variable for use by
+	 * Cray tools.
+	 */
+	rc = env_array_overwrite_fmt(&job->env, ALPS_APP_ID_ENV, "%"PRIu64,
+				     apid);
+	if (rc == 0) {
+		CRAY_ERR("Failed to set env variable %s",
+			 ALPS_APP_ID_ENV);
 	}
 #endif
 	return SLURM_SUCCESS;
@@ -416,11 +429,20 @@ extern int task_p_post_step (stepd_step_rec_t *job)
 	 * NUMA node: mems
 	 * CPU Masks: cpus
 	 */
-	if (job->batch) {
+	if (job->stepid == SLURM_BATCH_SCRIPT) {
 		// Batch Job Step
 		rc = snprintf(path, sizeof(path),
 			      "/dev/cpuset/slurm/uid_%d/job_%"
 			      PRIu32 "/step_batch", job->uid, job->jobid);
+		if (rc < 0) {
+			CRAY_ERR("snprintf failed. Return code: %d", rc);
+			return SLURM_ERROR;
+		}
+	} else if (job->stepid == SLURM_EXTERN_CONT) {
+		// Container for PAM to use for externally launched processes
+		rc = snprintf(path, sizeof(path),
+			      "/dev/cpuset/slurm/uid_%d/job_%"
+			      PRIu32 "/step_extern", job->uid, job->jobid);
 		if (rc < 0) {
 			CRAY_ERR("snprintf failed. Return code: %d", rc);
 			return SLURM_ERROR;

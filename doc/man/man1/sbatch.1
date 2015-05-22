@@ -1,4 +1,4 @@
-.TH "sbatch" "1" "SLURM 15.08" "November 2014" "SLURM Commands"
+.TH sbatch "1" "Slurm Commands" "April 2015" "Slurm Commands"
 
 .SH "NAME"
 sbatch \- Submit a batch script to SLURM.
@@ -11,9 +11,6 @@ sbatch submits a batch script to SLURM.  The batch script may be given to
 sbatch through a file name on the command line, or if no file name is specified,
 sbatch will read in a script from standard input. The batch script may contain
 options preceded with "#SBATCH" before any executable commands in the script.
-After the first line of the batch script, which typically identifies the
-shell to be used, sbatch will stop processing options at the first line which
-does NOT begin with "#SBATCH".
 
 sbatch exits immediately after the script is successfully transferred to the
 SLURM controller and assigned a SLURM job ID.  The batch script is not
@@ -232,7 +229,7 @@ For example, \fB\-\-constraint="intel"\fR
 A request can specify the number of nodes needed with some feature
 by appending an asterisk and count after the feature name.
 For example "\fB\-\-nodes=16 \-\-constraint=graphics*4 ..."\fR
-indicates that the job requires 16 nodes at that at least four of those
+indicates that the job requires 16 nodes and that at least four of those
 nodes must have the feature "graphics."
 .TP
 \fBAND\fR
@@ -446,8 +443,9 @@ replaced by the job ID.
 See the \fB\-\-input\fR option for filename specification options.
 
 .TP
-\fB\-\-exclusive\fR
-The job allocation can not share nodes with other running jobs.
+\fB\-\-exclusive[=user]\fR
+The job allocation can not share nodes with other running jobs (or just other
+users with the "=user" option).
 The default shared/exclusive behavior depends on system configuration and the
 partition's \fBShared\fR option takes precedence over the job's option.
 
@@ -538,20 +536,21 @@ Display help information and exit.
 
 .TP
 \fB\-\-hint\fR=<\fItype\fR>
-Bind tasks according to application hints
+Bind tasks according to application hints.
 .RS
 .TP
 .B compute_bound
 Select settings for compute bound applications:
-use all cores in each socket, one thread per core
+use all cores in each socket, one thread per core.
 .TP
 .B memory_bound
 Select settings for memory bound applications:
-use only one core in each socket, one thread per core
+use only one core in each socket, one thread per core.
 .TP
 .B [no]multithread
 [don't] use extra threads with in-core multi-threading
-which can benefit communication intensive applications
+which can benefit communication intensive applications.
+Only supported with the task/affinity plugin.
 .TP
 .B help
 show this help message
@@ -628,6 +627,14 @@ By default SLURM terminates the entire job allocation if any node fails in its
 range of allocated nodes.
 
 .TP
+\fB\-\-kill-on-invalid-dep\fR=<\fIyes|no\fR>
+If a job has an invalid dependency and it can never run this parameter tells
+Slurm to terminate it or not. A terminated job state will be JOB_CANCELLED.
+If this option is not specified the system wide behavior applies.
+By default the job stays pending with reason DependencyNeverSatisfied or if the
+kill_invalid_depend is specified in slurm.conf the job is terminated.
+
+.TP
 \fB\-L\fR, \fB\-\-licenses\fR=<\fBlicense\fR>
 Specification of licenses (or other resources available on all
 nodes of the cluster) which must be allocated to this job.
@@ -650,7 +657,7 @@ between clusters.
 
 .TP
 \fB\-m\fR, \fB\-\-distribution\fR=
-<\fIblock\fR|\fIcyclic\fR|\fIarbitrary\fR|\fIplane=<options>\fR[:\fIblock\fR|\fIcyclic\fR]>
+\fIarbitrary\fR|<\fIblock\fR|\fIcyclic\fR|\fIplane=<options>\fR[:\fIblock\fR|\fIcyclic\fR|\fIfcyclic\fR]>
 
 Specify alternate distribution methods for remote processes.
 In sbatch, this only sets environment variables that will be used by
@@ -734,17 +741,29 @@ that consecutive tasks share a socket.
 The cyclic distribution method will distribute tasks to sockets such
 that consecutive tasks are distributed over consecutive sockets (in a
 round\-robin fashion).
+Tasks requiring more than one CPU will have all of those CPUs allocated on a
+single socket if possible.
+.TP
+.B fcyclic
+The fcyclic distribution method will distribute tasks to sockets such
+that consecutive tasks are distributed over consecutive sockets (in a
+round\-robin fashion).
+Tasks requiring more than one CPU will have each CPUs allocated in a cyclic
+fashion across sockets.
 .RE
 
 .TP
 \fB\-\-mail\-type\fR=<\fItype\fR>
 Notify user by email when certain event types occur.
 Valid \fItype\fR values are BEGIN, END, FAIL, REQUEUE, ALL (equivalent to
-BEGIN, END, FAIL and REQUEUE), TIME_LIMIT, TIME_LIMIT_90 (reached 90 percent of
-time limit), TIME_LIMIT_80 (reached 80 percent of time limit), and TIME_LIMIT_50
+BEGIN, END, FAIL, REQUEUE, and STAGE_OUT), STAGE_OUT (burst buffer stage out
+completed), TIME_LIMIT, TIME_LIMIT_90 (reached 90 percent of time limit),
+TIME_LIMIT_80 (reached 80 percent of time limit), and TIME_LIMIT_50
 (reached 50 percent of time limit).
 Multiple \fItype\fR values may be specified in a comma separated list.
 The user to be notified is indicated with \fB\-\-mail\-user\fR.
+Mail notifications on job BEGIN, END and FAIL apply to a job array as a whole
+rather than generating individual email messages for each task in the job array.
 
 .TP
 \fB\-\-mail\-user\fR=<\fIuser\fR>
@@ -762,6 +781,8 @@ This parameter would generally be used if whole nodes
 are allocated to jobs (\fBSelectType=select/linear\fR).
 Also see \fB\-\-mem\-per\-cpu\fR.
 \fB\-\-mem\fR and \fB\-\-mem\-per\-cpu\fR are mutually exclusive.
+NOTE: A memory size specification is treated as a special case and grants
+the job access to all of the memory on each node.
 NOTE: Enforcement of memory limits currently relies upon the task/cgroup plugin
 or enabling of accounting, which samples memory use on a periodic basis (data
 need not be stored, just collected). In both cases memory use is based upon
@@ -777,7 +798,7 @@ seen using the \fBscontrol show config\fR command.
 Note that if the job's \fB\-\-mem\-per\-cpu\fR value exceeds the configured
 \fBMaxMemPerCPU\fR, then the user's limit will be treated as a memory limit
 per task; \fB\-\-mem\-per\-cpu\fR will be reduced to a value no larger than
-\fBMaxMemPerCPU\fR; \fB\-\-cpus\-per\-task\fR will be set and value of
+\fBMaxMemPerCPU\fR; \fB\-\-cpus\-per\-task\fR will be set and the value of
 \fB\-\-cpus\-per\-task\fR multiplied by the new \fB\-\-mem\-per\-cpu\fR
 value will equal the original \fB\-\-mem\-per\-cpu\fR value specified by
 the user.
@@ -1127,6 +1148,11 @@ The default value is specified by the system configuration parameter
 \fIJobFileAppend\fR.
 
 .TP
+\fB\-\-parsable\fR
+Outputs only the job id number and the cluster name if present.
+The values are separated by a semicolon. Errors will still be displayed.
+
+.TP
 \fB\-p\fR, \fB\-\-partition\fR=<\fIpartition_names\fR>
 Request a specific partition for the resource allocation.  If not specified,
 the default behavior is to allow the slurm controller to select the default
@@ -1136,6 +1162,13 @@ offering earliest initiation will be used with no regard given to the partition
 name ordering (although higher priority partitions will be considered first).
 When the job is initiated, the name of the partition used will be placed first
 in the job record partition string.
+
+.TP
+\fB\-\-power\fR=<\fIflags\fR>
+Comma separated list of power management plugin options.
+Currently available flags include:
+level (all nodes allocated to the job should have identical power caps,
+may be disabled by the Slurm configuration option PowerParameters=job_no_level).
 
 .TP
 \fB\-\-priority\fR=<value>
@@ -1174,11 +1207,6 @@ Lustre data is collected.
 \fBNetwork\fR
 Network (InfiniBand) data is collected.
 .RE
-
-.TP
-\fB\-\-parsable\fR
-Outputs only the job id number and the cluster name if present.
-The values are separated by a semicolon. Errors will still be displayed.
 
 .TP
 \fB\-\-propagate\fR[=\fIrlimitfR]
@@ -1277,6 +1305,12 @@ Default value is dependent upon the node's configured CoreSpecCount value.
 If a value of zero is designated and the Slurm configuration option
 AllowSpecResourcesUsage is enabled, the job will be allowed to override
 CoreSpecCount and use the specialized resources on nodes it is allocated.
+This option can not be used with the \fB\-\-thread\-spec\fR option.
+
+.TP
+\fB\-\-sicp\fR
+Identify a job as one which jobs submitted to other clusters can be dependent
+upon.
 
 .TP
 \fB\-\-signal\fR=[B:]<\fIsig_num\fR>[@<\fIsig_time\fR>]
@@ -1340,6 +1374,13 @@ scheduled to run given the current job queue and all the other arguments
 specifying the job requirements. No job is actually submitted.
 
 .TP
+\fB\-\-thread\-spec\fR=<\fInum\fR>
+Count of specialized threads per node reserved by the job for system operations
+and not used by the application. The application will not use these threads,
+but will be charged for their allocation.
+This option can not be used with the \fB\-\-core\-spec\fR option.
+
+.TP
 \fB\-\-threads\-per\-core\fR=<\fIthreads\fR>
 Restrict node selection to nodes with at least the specified number of
 threads per core.  NOTE: "Threads" refers to the number of processing units on
@@ -1391,13 +1432,11 @@ errors will be displayed.
 .TP
 \fB\-w\fR, \fB\-\-nodelist\fR=<\fInode name list\fR>
 Request a specific list of hosts.
-Unless constrained by the maximum node count, the job will contain
-\fIall\fR of these hosts.
+The job will contain \fIall\fR of these hosts and possibly additional hosts
+as needed to satisfy resource requirements.
 The list may be specified as a comma\-separated list of hosts, a range of hosts
 (host[1\-5,7,...] for example), or a filename.
 The host list will be assumed to be a filename if it contains a "/" character.
-If you specify a maximum node count and the host list contains more nodes, the
-extra node names will be silently ignored.
 If you specify a minimum node or processor count larger than can be satisfied
 by the supplied host list, additional resources will be allocated on other
 nodes as needed.
@@ -1541,7 +1580,6 @@ Same as \fB\-\-conn\-type\fR
 \fBSBATCH_CORE_SPEC\fR
 Same as \fB\-\-core\-spec\fR
 .TP
-.TP
 \fBSBATCH_DEBUG\fR
 Same as \fB\-v, \-\-verbose\fR
 .TP
@@ -1550,12 +1588,6 @@ Same as \fB\-m, \-\-distribution\fR
 .TP
 \fBSBATCH_EXCLUSIVE\fR
 Same as \fB\-\-exclusive\fR
-.TP
-\fBSLURM_EXIT_ERROR\fR
-Specifies the exit code generated when a SLURM error occurs
-(e.g. invalid options).
-This can be used by a script to distinguish application exit codes from
-various SLURM error conditions.
 .TP
 \fBSBATCH_EXPORT\fR
 Same as \fB\-\-export\fR
@@ -1611,6 +1643,9 @@ Same as \fB\-O, \-\-overcommit\fR
 \fBSBATCH_PARTITION\fR
 Same as \fB\-p, \-\-partition\fR
 .TP
+\fBSBATCH_POWER\fR
+Same as \fB\-\-power\fR
+.TP
 \fBSBATCH_PROFILE\fR
 Same as \fB\-\-profile\fR
 .TP
@@ -1631,8 +1666,14 @@ for that number of switches. See \fB\-\-switches\fR
 \fBSBATCH_REQUEUE\fR
 Same as \fB\-\-requeue\fR
 .TP
+\fBSBATCH_SICP\fR
+Same as \fB\-\-sicp\fR
+.TP
 \fBSBATCH_SIGNAL\fR
 Same as \fB\-\-signal\fR
+.TP
+\fBSBATCH_THREAD_SPEC\fR
+Same as \fB\-\-thread\-spec\fR
 .TP
 \fBSBATCH_TIMELIMIT\fR
 Same as \fB\-t, \-\-time\fR
@@ -1645,6 +1686,12 @@ Max time waiting for requested switches. See \fB\-\-switches\fR
 .TP
 \fBSBATCH_WCKEY\fR
 Same as \fB\-\-wckey\fR
+.TP
+\fBSLURM_EXIT_ERROR\fR
+Specifies the exit code generated when a SLURM error occurs
+(e.g. invalid options).
+This can be used by a script to distinguish application exit codes from
+various SLURM error conditions.
 .TP
 \fBSLURM_STEP_KILLED_MSG_NODE_ID\fR=ID
 If set, only the specified node will log when the job or step are killed
@@ -1861,7 +1908,7 @@ Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
 Copyright (C) 2008\-2010 Lawrence Livermore National Security.
 .br
-Copyright (C) 2010\-2013 SchedMD LLC.
+Copyright (C) 2010\-2015 SchedMD LLC.
 .LP
 This file is part of SLURM, a resource management program.
 For details, see <http://slurm.schedmd.com/>.

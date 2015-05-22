@@ -51,8 +51,7 @@
 extern int
 scontrol_update_node (int argc, char *argv[])
 {
-	int i, j, k, rc = 0, update_cnt = 0;
-
+	int i, j, rc = 0, update_cnt = 0;
 	uint16_t state_val;
 	update_node_msg_t node_msg;
 	char *reason_str = NULL;
@@ -201,12 +200,8 @@ scontrol_update_node (int argc, char *argv[])
 					fprintf (stderr, "Request aborted\n");
 					fprintf (stderr, "Valid states are: ");
 					fprintf (stderr,
-						 "NoResp DRAIN FAIL RESUME "
+						 "NoResp DRAIN FAIL FUTURE RESUME "
 						 "POWER_DOWN POWER_UP UNDRAIN");
-					for (k = 0; k < NODE_STATE_END; k++) {
-						fprintf (stderr, " %s",
-						         node_state_string(k));
-					}
 					fprintf (stderr, "\n");
 					fprintf (stderr,
 						 "Not all states are valid "
@@ -226,11 +221,12 @@ scontrol_update_node (int argc, char *argv[])
 		}
 	}
 
-	if (((node_msg.node_state == NODE_STATE_DRAIN) ||
+	if (((node_msg.node_state == NODE_STATE_DOWN)  ||
+	     (node_msg.node_state == NODE_STATE_DRAIN) ||
 	     (node_msg.node_state == NODE_STATE_FAIL)) &&
 	    ((node_msg.reason == NULL) || (strlen(node_msg.reason) == 0))) {
-		fprintf (stderr, "You must specify a reason when DRAINING a "
-			"node\nRequest aborted\n");
+		fprintf(stderr, "You must specify a reason when DOWNING or "
+			"DRAINING a node. Request denied\n");
 		goto done;
 	}
 

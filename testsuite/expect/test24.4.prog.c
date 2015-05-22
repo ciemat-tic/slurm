@@ -428,7 +428,7 @@ int _setup_assoc_list(void)
 	assoc->user = xstrdup("u2");
 	list_append(update.objects, assoc);
 
-	if (assoc_mgr_update_assocs(&update))
+	if (assoc_mgr_update_assocs(&update, false))
 		error("assoc_mgr_update_assocs: %m");
 	list_destroy(update.objects);
 
@@ -490,7 +490,7 @@ int main (int argc, char **argv)
 	sleep(1);
 	memset(&resp, 0, sizeof(shares_response_msg_t));
 	resp.assoc_shares_list = assoc_mgr_get_shares(NULL, 0, NULL, NULL);
-	process(&resp);
+	process(&resp, 0);
 
 	/* free memory */
 	if (slurm_priority_fini() != SLURM_SUCCESS)

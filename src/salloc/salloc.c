@@ -60,13 +60,14 @@
 
 #include "src/common/cpu_frequency.h"
 #include "src/common/env.h"
+#include "src/common/plugstack.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_rlimits_info.h"
+#include "src/common/slurm_time.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
-#include "src/common/plugstack.h"
 
 #include "src/salloc/salloc.h"
 #include "src/salloc/opt.h"
@@ -494,10 +495,10 @@ relinquish:
 	if (allocation_state != REVOKED) {
 		pthread_mutex_unlock(&allocation_state_lock);
 
-		info("Relinquishing job allocation %d", alloc->job_id);
+		info("Relinquishing job allocation %u", alloc->job_id);
 		if ((slurm_complete_job(alloc->job_id, status) != 0) &&
 		    (slurm_get_errno() != ESLURM_ALREADY_DONE))
-			error("Unable to clean up job allocation %d: %m",
+			error("Unable to clean up job allocation %u: %m",
 			      alloc->job_id);
 		pthread_mutex_lock(&allocation_state_lock);
 		allocation_state = REVOKED;
@@ -765,6 +766,11 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		desc->spank_job_env_size = opt.spank_job_env_size;
 	}
 
+	if (opt.power_flags)
+		desc->power_flags = opt.power_flags;
+	if (opt.sicp_mode)
+		desc->sicp_mode = opt.sicp_mode;
+
 	return 0;
 }
 
@@ -931,7 +937,7 @@ static void _timeout_handler(srun_timeout_msg_t *msg)
 	if (msg->timeout != last_timeout) {
 		last_timeout = msg->timeout;
 		verbose("Job allocation time limit to be reached at %s",
-			slurm_ctime(&msg->timeout));
+			slurm_ctime2(&msg->timeout));
 	}
 }
 

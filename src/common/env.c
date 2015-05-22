@@ -670,6 +670,13 @@ int setup_env(env_t *env, bool preserve_env)
 		}
 	}
 
+	if (env->job_name) {
+		if (setenvf(&env->env, "SLURM_JOB_NAME", "%s", env->job_name)) {
+			error("Unable to set SLURM_JOB_NAME environment");
+			rc = SLURM_FAILURE;
+		}
+	}
+
 	if (!(cluster_flags & CLUSTER_FLAG_BG)
 	    && !(cluster_flags & CLUSTER_FLAG_CRAYXT)) {
 		/* These aren't relavant to a system not using Slurm
@@ -960,6 +967,7 @@ extern char *uint32_compressed_to_str(uint32_t array_len,
  *
  * Sets the variables:
  *	SLURM_JOB_ID
+ *	SLURM_JOB_NAME
  *	SLURM_JOB_NUM_NODES
  *	SLURM_JOB_NODELIST
  *	SLURM_JOB_CPUS_PER_NODE
@@ -1000,6 +1008,7 @@ env_array_for_job(char ***dest, const resource_allocation_response_msg_t *alloc,
 	}
 
 	env_array_overwrite_fmt(dest, "SLURM_JOB_ID", "%u", alloc->job_id);
+	env_array_overwrite_fmt(dest, "SLURM_JOB_NAME", "%s", desc->name);
 	env_array_overwrite_fmt(dest, "SLURM_JOB_NUM_NODES", "%u", node_cnt);
 	env_array_overwrite_fmt(dest, "SLURM_JOB_NODELIST", "%s",
 				alloc->node_list);
@@ -1666,6 +1675,32 @@ void env_array_merge_slurm(char ***dest_array, const char **src_array)
 }
 
 /*
+ * Merge all of the environment variables in src_array into the array
+ * dest_array and strip any header names of "SPANK_".  Any variables already
+ * found in dest_array will be overwritten with the value from src_array.
+ */
+void env_array_merge_spank(char ***dest_array, const char **src_array)
+{
+	char **ptr;
+	char name[256], *value;
+
+	if (src_array == NULL)
+		return;
+
+	value = xmalloc(ENV_BUFSIZE);
+	for (ptr = (char **)src_array; *ptr != NULL; ptr++) {
+		if (_env_array_entry_splitter(*ptr, name, sizeof(name),
+					      value, ENV_BUFSIZE)) {
+			if (strncmp(name, "SPANK_" ,6))
+				env_array_overwrite(dest_array, name, value);
+			else
+				env_array_overwrite(dest_array, name+6, value);
+		}
+	}
+	xfree(value);
+}
+
+/*
  * Strip out trailing carriage returns and newlines
  */
 static void _strip_cr_nl(char *line)
@@ -1892,8 +1927,8 @@ char **env_array_user_default(const char *username, int timeout, int mode)
 	if (config_timeout == 0)	/* just read directly from cache */
 		 return _load_env_cache(username);
 
-	if (stat("/bin/su", &buf))
-		fatal("Could not locate command: /bin/su");
+	if (stat(SUCMD, &buf))
+		fatal("Could not locate command: "SUCMD);
 	if (stat("/bin/echo", &buf))
 		fatal("Could not locate command: /bin/echo");
 	if (stat(stepd_path, &buf) == 0) {
@@ -1929,14 +1964,14 @@ char **env_array_user_default(const char *username, int timeout, int mode)
 		close(2);
 		open("/dev/null", O_WRONLY);
 		if      (mode == 1)
-			execl("/bin/su", "su", username, "-c", cmdstr, NULL);
+			execl(SUCMD, "su", username, "-c", cmdstr, NULL);
 		else if (mode == 2)
-			execl("/bin/su", "su", "-", username, "-c", cmdstr, NULL);
+			execl(SUCMD, "su", "-", username, "-c", cmdstr, NULL);
 		else {	/* Default system configuration */
 #ifdef LOAD_ENV_NO_LOGIN
-			execl("/bin/su", "su", username, "-c", cmdstr, NULL);
+			execl(SUCMD, "su", username, "-c", cmdstr, NULL);
 #else
-			execl("/bin/su", "su", "-", username, "-c", cmdstr, NULL);
+			execl(SUCMD, "su", "-", username, "-c", cmdstr, NULL);
 #endif
 		}
 		exit(1);
@@ -1964,13 +1999,13 @@ char **env_array_user_default(const char *username, int timeout, int mode)
 		timeleft -= (now.tv_sec -  begin.tv_sec)  * 1000;
 		timeleft -= (now.tv_usec - begin.tv_usec) / 1000;
 		if (timeleft <= 0) {
-			verbose("timeout waiting for /bin/su to complete");
+			verbose("timeout waiting for "SUCMD" to complete");
 			kill(-child, 9);
 			break;
 		}
 		if ((rc = poll(&ufds, 1, timeleft)) <= 0) {
 			if (rc == 0) {
-				verbose("timeout waiting for /bin/su to complete");
+				verbose("timeout waiting for "SUCMD" to complete");
 				break;
 			}
 			if ((errno == EINTR) || (errno == EAGAIN))

@@ -303,7 +303,8 @@ _build_path(char* fname, char **prog_env)
 	if (file_name[0] == '.') {
 		file_path = (char *)xmalloc(len);
 		dir = (char *)xmalloc(len);
-		(void) getcwd(dir, len);
+		if (!getcwd(dir, len))
+			error("getcwd failed: %m");
 		snprintf(file_path, len, "%s/%s", dir, file_name);
 		xfree(file_name);
 		xfree(dir);
@@ -366,6 +367,7 @@ exec_task(stepd_step_rec_t *job, int i)
 	int fd, j;
 	stepd_step_task_info_t *task = job->task[i];
 	char **tmp_env;
+	int saved_errno;
 
 	if (i == 0)
 		_make_tmpdir(job);
@@ -494,6 +496,7 @@ exec_task(stepd_step_rec_t *job, int i)
 	}
 
 	execve(task->argv[0], task->argv, job->env);
+	saved_errno = errno;
 
 	/*
 	 * print error message and clean up if execve() returns:
@@ -509,10 +512,12 @@ exec_task(stepd_step_rec_t *job, int i)
 				eol[0] = '\0';
 			else
 				buf[sizeof(buf)-1] = '\0';
+			slurm_seterrno(saved_errno);
 			error("execve(): bad interpreter(%s): %m", buf+2);
 			exit(errno);
 		}
 	}
+	slurm_seterrno(saved_errno);
 	error("execve(): %s: %m", task->argv[0]);
 	exit(errno);
 }

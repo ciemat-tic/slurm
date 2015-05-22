@@ -67,14 +67,15 @@
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
 #include "src/common/parse_spec.h"
+#include "src/common/power.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_jobcomp.h"
 #include "src/common/slurm_topology.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_route.h"
+#include "src/common/strnatcmp.h"
 #include "src/common/switch.h"
 #include "src/common/xstring.h"
-#include "src/common/strnatcmp.h"
 
 #include "src/slurmctld/acct_policy.h"
 #include "src/slurmctld/burst_buffer.h"
@@ -256,50 +257,14 @@ static void _reorder_nodes_by_rank(void)
 static void _build_bitmaps_pre_select(void)
 {
 	struct part_record   *part_ptr;
-	struct node_record   *node_ptr;
 	ListIterator part_iterator;
-	int i;
 
 	/* scan partition table and identify nodes in each */
 	part_iterator = list_iterator_create(part_list);
 	while ((part_ptr = (struct part_record *) list_next(part_iterator))) {
-		FREE_NULL_BITMAP(part_ptr->node_bitmap);
-
-		if ((part_ptr->nodes == NULL) || (part_ptr->nodes[0] == '\0')) {
-			/* Partitions need a bitmap, even if empty */
-			part_ptr->node_bitmap = bit_alloc(node_record_count);
-			continue;
-		}
-
-		if (!strcmp(part_ptr->nodes, "ALL")) {
-			part_ptr->node_bitmap = (bitstr_t *)
-						bit_alloc(node_record_count);
-			bit_nset(part_ptr->node_bitmap, 0, node_record_count-1);
-			xfree(part_ptr->nodes);
-			part_ptr->nodes=bitmap2node_name(part_ptr->node_bitmap);
-		} else {
-			if (node_name2bitmap(part_ptr->nodes, false,
-					     &part_ptr->node_bitmap)) {
-				fatal("Invalid node names in partition %s",
-				      part_ptr->name);
-			}
-		}
-
-		for (i = 0; i < node_record_count; i++) {
-			if (bit_test(part_ptr->node_bitmap, i) == 0)
-				continue;
-			node_ptr = &node_record_table_ptr[i];
-			part_ptr->total_nodes++;
-			if (slurmctld_conf.fast_schedule)
-				part_ptr->total_cpus +=
-					node_ptr->config_ptr->cpus;
-			else
-				part_ptr->total_cpus += node_ptr->cpus;
-			node_ptr->part_cnt++;
-			xrealloc(node_ptr->part_pptr, (node_ptr->part_cnt *
-				sizeof(struct part_record *)));
-			node_ptr->part_pptr[node_ptr->part_cnt-1] = part_ptr;
-		}
+		if (build_part_bitmap(part_ptr) == ESLURM_INVALID_NODE_NAME)
+			fatal("Invalid node names in partition %s",
+					part_ptr->name);
 	}
 	list_iterator_destroy(part_iterator);
 	return;
@@ -548,6 +513,125 @@ static int _build_all_nodeline_info(void)
 	return rc;
 }
 
+static int _sort_tres_list(void *v1, void *v2)
+{
+	slurmdb_tres_rec_t *tres_rec_a  = *(slurmdb_tres_rec_t **)v1;
+	slurmdb_tres_rec_t *tres_rec_b  = *(slurmdb_tres_rec_t **)v2;
+
+	if (tres_rec_a->id < tres_rec_b->id)
+		return -1;
+	else if (tres_rec_a->id > tres_rec_b->id)
+		return 1;
+
+	return 0;
+}
+
+static int _init_tres(void)
+{
+	char *temp_char = slurm_get_accounting_storage_tres();
+	List char_list;
+	List add_list = NULL;
+	slurmdb_tres_rec_t *tres_rec;
+
+	if (!temp_char) {
+		error("No tres defined, this should never happen");
+		return SLURM_ERROR;
+	}
+
+	char_list = list_create(slurm_destroy_char);
+	slurm_addto_char_list(char_list, temp_char);
+	xfree(temp_char);
+
+	if (!list_count(char_list)) {
+		FREE_NULL_LIST(char_list);
+		error("TRES list is empty, this should never happen");
+		return SLURM_ERROR;
+	}
+
+	FREE_NULL_LIST(cluster_tres_list);
+	cluster_tres_list = list_create(slurmdb_destroy_tres_rec);
+	while ((temp_char = list_pop(char_list))) {
+		tres_rec = xmalloc(sizeof(slurmdb_tres_rec_t));
+
+		tres_rec->type = temp_char;
+
+		if (!strcasecmp(temp_char, "cpu"))
+			tres_rec->id = TRES_CPU;
+		else if (!strcasecmp(temp_char, "mem"))
+			tres_rec->id = TRES_MEM;
+		else if (!strcasecmp(temp_char, "energy"))
+			tres_rec->id = TRES_ENERGY;
+		else if (!strncasecmp(temp_char, "gres/", 5)) {
+			tres_rec->type[4] = '\0';
+			tres_rec->name = xstrdup(temp_char+5);
+			if (!tres_rec->name)
+				fatal("Gres type tres need to have a name, "
+				      "(i.e. Gres/GPU).  You gave %s",
+				      temp_char);
+		} else if (!strncasecmp(temp_char, "license/", 8)) {
+			tres_rec->type[7] = '\0';
+			tres_rec->name = xstrdup(temp_char+8);
+			if (!tres_rec->name)
+				fatal("License type tres need to "
+				      "have a name, (i.e. License/Foo).  "
+				      "You gave %s",
+				      temp_char);
+		} else {
+			fatal("%s: Unknown tres type '%s', acceptable types are "
+			      "CPU,Gres/,License/,Mem", __func__, temp_char);
+			xfree(tres_rec->type);
+			xfree(tres_rec);
+		}
+
+		if (!tres_rec->id &&
+		    (assoc_mgr_fill_in_tres(acct_db_conn, tres_rec,
+					    ACCOUNTING_ENFORCE_TRES, NULL, 0)
+		     != SLURM_SUCCESS)) {
+			if (!add_list)
+				add_list = list_create(
+					slurmdb_destroy_tres_rec);
+			info("Couldn't find tres %s%s%s in the database, "
+			     "creating.",
+			     tres_rec->type, tres_rec->name ? "/" : "",
+			     tres_rec->name ? tres_rec->name : "");
+			list_append(add_list, tres_rec);
+		} else
+			list_append(cluster_tres_list, tres_rec);
+	}
+
+	if (add_list) {
+		if (acct_storage_g_add_tres(acct_db_conn, getuid(), add_list)
+		    != SLURM_SUCCESS)
+			fatal("Problem adding tres to the database, "
+			      "can't continue until database is able to "
+			      "make new tres");
+		/* refresh list here since the updates are not
+		   sent dynamically */
+		assoc_mgr_refresh_lists(acct_db_conn, ASSOC_MGR_CACHE_TRES);
+
+		while ((tres_rec = list_pop(add_list))) {
+			if (assoc_mgr_fill_in_tres(acct_db_conn, tres_rec,
+						   ACCOUNTING_ENFORCE_TRES,
+						   NULL, 0)
+			    != SLURM_SUCCESS) {
+				fatal("Unknown tres %s%s%s after adding.  "
+				      "It appears "
+				      "there may be a problem with the "
+				      "slurmdbd communicating with the "
+				      "slurmctld.",
+				      tres_rec->type,
+				      tres_rec->name ? "/" : "",
+				      tres_rec->name ? tres_rec->name : "");
+			} else
+				list_append(cluster_tres_list, tres_rec);
+		}
+	}
+
+	list_sort(cluster_tres_list, (ListCmpF)_sort_tres_list);
+
+	return SLURM_SUCCESS;
+}
+
 /* Convert a comma delimited list of account names into a NULL terminated
  * array of pointers to strings. Call accounts_list_free() to release memory */
 extern void accounts_list_build(char *accounts, char ***accounts_array)
@@ -594,8 +678,8 @@ extern void qos_list_build(char *qos, bitstr_t **qos_bits)
 	slurmdb_qos_rec_t qos_rec, *qos_ptr = NULL;
 	bitstr_t *tmp_qos_bitstr;
 	int rc;
-	assoc_mgr_lock_t locks = { NO_LOCK, NO_LOCK,
-				   READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	assoc_mgr_lock_t locks = { NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK };
 
 	if (!qos) {
 		FREE_NULL_BITMAP(*qos_bits);
@@ -686,7 +770,6 @@ static int _build_single_partitionline_info(slurm_conf_partition_t *part)
 	} else {
 		part_ptr->flags &= (~PART_FLAG_NO_ROOT);
 	}
-
 	if (part_ptr->flags & PART_FLAG_NO_ROOT)
 		debug2("partition %s does not allow root jobs", part_ptr->name);
 
@@ -697,6 +780,8 @@ static int _build_single_partitionline_info(slurm_conf_partition_t *part)
 		part->default_time = NO_VAL;
 	}
 
+	if (part->exclusive_user)
+		part_ptr->flags |= PART_FLAG_EXCLUSIVE_USER;
 	if (part->hidden_flag)
 		part_ptr->flags |= PART_FLAG_HIDDEN;
 	if (part->root_only_flag)
@@ -930,8 +1015,7 @@ int read_slurm_conf(int recover, bool reconfig)
 		}
 		node_record_table_ptr = NULL;
 		node_record_count = 0;
-		xhash_free (node_hash_table);
-		node_hash_table = NULL;
+		xhash_free(node_hash_table);
 		old_part_list = part_list;
 		part_list = NULL;
 		old_def_part_name = default_part_name;
@@ -946,7 +1030,9 @@ int read_slurm_conf(int recover, bool reconfig)
 		return error_code;
 	}
 
-	if (slurm_layouts_init() != SLURM_SUCCESS)
+	_init_tres();
+
+	if (layouts_init() != SLURM_SUCCESS)
 		fatal("Failed to initialize the layouts framework");
 
 	if (slurm_topo_init() != SLURM_SUCCESS)
@@ -1006,6 +1092,8 @@ int read_slurm_conf(int recover, bool reconfig)
 	rehash_node();
 	slurm_topo_build_config();
 	route_g_reconfigure();
+	if (reconfig)
+		power_g_reconfig();
 	cpu_freq_reconfig();
 
 	rehash_jobs();
@@ -1018,7 +1106,7 @@ int read_slurm_conf(int recover, bool reconfig)
 	 * Only load it at init time, not during reconfiguration stages.
 	 * It requires a full restart to switch to a new configuration for now.
 	 */
-	if (!reconfig && (slurm_layouts_load_config() != SLURM_SUCCESS))
+	if (!reconfig && (layouts_load_config(recover) != SLURM_SUCCESS))
 		fatal("Failed to load the layouts framework configuration");
 
 	if (reconfig) {		/* Preserve state from memory */
@@ -1095,7 +1183,6 @@ int read_slurm_conf(int recover, bool reconfig)
 
 	/* NOTE: Run restore_node_features before _restore_job_dependencies */
 	restore_node_features(recover);
-	_restore_job_dependencies();
 #ifdef 	HAVE_ELAN
 	_validate_node_proc_count();
 #endif
@@ -1111,6 +1198,9 @@ int read_slurm_conf(int recover, bool reconfig)
 			(void) slurm_sched_g_reconfig();
 		}
 	}
+
+	/* NOTE: Run loadd_all_resv_state() before _restore_job_dependencies */
+	_restore_job_dependencies();
 
 	/* sort config_list by weight for scheduling */
 	list_sort(config_list, &list_compare_config);
@@ -1492,6 +1582,19 @@ static int  _restore_part_state(List old_part_list, char *old_def_part_name,
 				else
 					part_ptr->flags &= (~PART_FLAG_NO_ROOT);
 			}
+			if ((part_ptr->flags & PART_FLAG_EXCLUSIVE_USER) !=
+			    (old_part_ptr->flags & PART_FLAG_EXCLUSIVE_USER)) {
+				error("Partition %s ExclusiveUser differs "
+				      "from slurm.conf", part_ptr->name);
+				if (old_part_ptr->flags &
+				    PART_FLAG_EXCLUSIVE_USER) {
+					part_ptr->flags |=
+						PART_FLAG_EXCLUSIVE_USER;
+				} else {
+					part_ptr->flags &=
+						(~PART_FLAG_EXCLUSIVE_USER);
+				}
+			}
 			if ((part_ptr->flags & PART_FLAG_ROOT_ONLY) !=
 			    (old_part_ptr->flags & PART_FLAG_ROOT_ONLY)) {
 				error("Partition %s RootOnly differs from "
@@ -1841,8 +1944,7 @@ static int _sync_nodes_to_comp_job(void)
 			   plugin and this happens before it is
 			   normally set up so do it now.
 			*/
-			if (!cluster_cpus)
-				set_cluster_cpus();
+			set_cluster_tres();
 
 			info("%s: Job %u in completing state",
 			     __func__, job_ptr->job_id);
@@ -1878,6 +1980,12 @@ static int _sync_nodes_to_active_job(struct job_record *job_ptr)
 				continue;
 		} else if (bit_test(job_ptr->node_bitmap, i) == 0)
 			continue;
+
+		if (job_ptr->details &&
+		    (job_ptr->details->whole_node == 2)) {
+			node_ptr->owner_job_cnt++;
+			node_ptr->owner = job_ptr->user_id;
+		}
 
 		node_flags = node_ptr->node_state & NODE_STATE_FLAGS;
 
@@ -2000,7 +2108,7 @@ static int _restore_job_dependencies(void)
 	struct job_record *job_ptr;
 	ListIterator job_iterator;
 	char *new_depend;
-	bool valid;
+	bool valid = true;
 	List license_list;
 
 	assoc_mgr_clear_used_info();
@@ -2068,7 +2176,10 @@ static void _acct_restore_active_jobs(void)
 		if (IS_JOB_SUSPENDED(job_ptr))
 			jobacct_storage_g_job_suspend(acct_db_conn, job_ptr);
 		if (IS_JOB_SUSPENDED(job_ptr) || IS_JOB_RUNNING(job_ptr)) {
-			jobacct_storage_g_job_start(acct_db_conn, job_ptr);
+			if (!with_slurmdbd)
+				jobacct_storage_g_job_start(acct_db_conn, job_ptr);
+			else if (job_ptr->db_index != NO_VAL)
+				job_ptr->db_index = 0;
 			step_iterator = list_iterator_create(
 				job_ptr->step_list);
 			while ((step_ptr = (struct step_record *)

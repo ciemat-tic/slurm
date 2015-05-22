@@ -169,7 +169,7 @@ extern void slurm_get_job_stderr(char *buf, int buf_size, job_info_t * job_ptr)
 	if (job_ptr == NULL)
 		snprintf(buf, buf_size, "%s", "job pointer is NULL");
 	else if (job_ptr->std_err)
-		snprintf(buf, buf_size, "%s", job_ptr->std_err);
+		_fname_format(buf, buf_size, job_ptr, job_ptr->std_err);
 	else if (job_ptr->batch_flag == 0)
 		snprintf(buf, buf_size, "%s", "");
 	else if (job_ptr->std_out)
@@ -333,7 +333,7 @@ extern char *
 slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 {
 	int i, j, k;
-	char time_str[32], *group_name, *user_name;
+	char time_str[32], *group_name, *spec_name, *user_name;
 	char tmp1[128], tmp2[128], tmp3[128], tmp4[128], tmp5[128], tmp6[128];
 	char *tmp6_ptr;
 	char tmp_line[1024];
@@ -689,6 +689,16 @@ line6:
 		xstrcat(out, "\n   ");
 
 	/****** Line 16 ******/
+	/* Tres should already of been converted at this point from simple */
+	snprintf(tmp_line, sizeof(tmp_line), "TRES=%s",
+		 job_ptr->tres_alloc_str);
+	xstrcat(out, tmp_line);
+	if (one_liner)
+		xstrcat(out, " ");
+	else
+		xstrcat(out, "\n   ");
+
+	/****** Line 17 ******/
 	if (job_ptr->sockets_per_node == (uint16_t) NO_VAL)
 		strcpy(tmp1, "*");
 	else
@@ -711,13 +721,20 @@ line6:
 		strcpy(tmp5, "*");
 	else
 		snprintf(tmp5, sizeof(tmp5), "%u", job_ptr->ntasks_per_core);
-	if (job_ptr->core_spec == (uint16_t) NO_VAL)
+	if (job_ptr->core_spec == (uint16_t) NO_VAL) {
+		spec_name = "Core";
 		strcpy(tmp6, "*");
-	else
+	} else if (job_ptr->core_spec & CORE_SPEC_THREAD) {
+		spec_name = "Thread";
+		i = job_ptr->core_spec & (~CORE_SPEC_THREAD);
+		snprintf(tmp6, sizeof(tmp6), "%d", i);
+	} else {
+		spec_name = "Core";
 		snprintf(tmp6, sizeof(tmp6), "%u", job_ptr->core_spec);
+	}
 	snprintf(tmp_line, sizeof(tmp_line),
-		 "Socks/Node=%s NtasksPerN:B:S:C=%s:%s:%s:%s CoreSpec=%s",
-		 tmp1, tmp2, tmp3, tmp4, tmp5, tmp6);
+		 "Socks/Node=%s NtasksPerN:B:S:C=%s:%s:%s:%s %sSpec=%s",
+		 tmp1, tmp2, tmp3, tmp4, tmp5, spec_name, tmp6);
 	xstrcat(out, tmp_line);
 	if (one_liner)
 		xstrcat(out, " ");
@@ -885,7 +902,7 @@ line6:
 		hostlist_destroy(hl);
 		hostlist_destroy(hl_last);
 	}
-	/****** Line 17 ******/
+	/****** Line 18 ******/
 line15:
 	if (job_ptr->pn_min_memory & MEM_PER_CPU) {
 		job_ptr->pn_min_memory &= (~MEM_PER_CPU);
@@ -916,7 +933,7 @@ line15:
 	else
 		xstrcat(out, "\n   ");
 
-	/****** Line 18 ******/
+	/****** Line 19 ******/
 	snprintf(tmp_line, sizeof(tmp_line),
 		 "Features=%s Gres=%s Reservation=%s",
 		 job_ptr->features, job_ptr->gres, job_ptr->resv_name);
@@ -926,19 +943,26 @@ line15:
 	else
 		xstrcat(out, "\n   ");
 
-	/****** Line 19 ******/
+	/****** Line 20 ******/
+	if (job_ptr->shared == 0)
+		tmp6_ptr = "0";
+	else if (job_ptr->shared == 1)
+		tmp6_ptr = "1";
+	else if (job_ptr->shared == 2)
+		tmp6_ptr = "USER";
+	else
+		tmp6_ptr = "OK";
 	snprintf(tmp_line, sizeof(tmp_line),
 		 "Shared=%s Contiguous=%d Licenses=%s Network=%s",
-		 (job_ptr->shared == 0 ? "0" :
-		  job_ptr->shared == 1 ? "1" : "OK"),
-		 job_ptr->contiguous, job_ptr->licenses, job_ptr->network);
+		 tmp6_ptr, job_ptr->contiguous, job_ptr->licenses,
+		 job_ptr->network);
 	xstrcat(out, tmp_line);
 	if (one_liner)
 		xstrcat(out, " ");
 	else
 		xstrcat(out, "\n   ");
 
-	/****** Line 20 ******/
+	/****** Line 21 ******/
 	snprintf(tmp_line, sizeof(tmp_line), "Command=%s",
 		 job_ptr->command);
 	xstrcat(out, tmp_line);
@@ -947,13 +971,13 @@ line15:
 	else
 		xstrcat(out, "\n   ");
 
-	/****** Line 21 ******/
+	/****** Line 22 ******/
 	snprintf(tmp_line, sizeof(tmp_line), "WorkDir=%s",
 		 job_ptr->work_dir);
 	xstrcat(out, tmp_line);
 
 	if (cluster_flags & CLUSTER_FLAG_BG) {
-		/****** Line 22 (optional) ******/
+		/****** Line 23 (optional) ******/
 		select_g_select_jobinfo_sprint(job_ptr->select_jobinfo,
 					       select_buf, sizeof(select_buf),
 					       SELECT_PRINT_BG_ID);
@@ -967,7 +991,7 @@ line15:
 			xstrcat(out, tmp_line);
 		}
 
-		/****** Line 23 (optional) ******/
+		/****** Line 24 (optional) ******/
 		select_g_select_jobinfo_sprint(job_ptr->select_jobinfo,
 					       select_buf, sizeof(select_buf),
 					       SELECT_PRINT_MIXED_SHORT);
@@ -980,7 +1004,7 @@ line15:
 		}
 
 		if (cluster_flags & CLUSTER_FLAG_BGL) {
-			/****** Line 24 (optional) ******/
+			/****** Line 25 (optional) ******/
 			select_g_select_jobinfo_sprint(
 				job_ptr->select_jobinfo,
 				select_buf, sizeof(select_buf),
@@ -995,7 +1019,7 @@ line15:
 				xstrcat(out, tmp_line);
 			}
 		}
-		/****** Line 25 (optional) ******/
+		/****** Line 26 (optional) ******/
 		select_g_select_jobinfo_sprint(job_ptr->select_jobinfo,
 					       select_buf, sizeof(select_buf),
 					       SELECT_PRINT_LINUX_IMAGE);
@@ -1013,7 +1037,7 @@ line15:
 
 			xstrcat(out, tmp_line);
 		}
-		/****** Line 26 (optional) ******/
+		/****** Line 27 (optional) ******/
 		select_g_select_jobinfo_sprint(job_ptr->select_jobinfo,
 					       select_buf, sizeof(select_buf),
 					       SELECT_PRINT_MLOADER_IMAGE);
@@ -1026,7 +1050,7 @@ line15:
 				 "MloaderImage=%s", select_buf);
 			xstrcat(out, tmp_line);
 		}
-		/****** Line 27 (optional) ******/
+		/****** Line 28 (optional) ******/
 		select_g_select_jobinfo_sprint(job_ptr->select_jobinfo,
 					       select_buf, sizeof(select_buf),
 					       SELECT_PRINT_RAMDISK_IMAGE);
@@ -1045,7 +1069,7 @@ line15:
 		}
 	}
 
-	/****** Line 28 (optional) ******/
+	/****** Line 29 (optional) ******/
 	if (job_ptr->comment) {
 		if (one_liner)
 			xstrcat(out, " ");
@@ -1056,7 +1080,7 @@ line15:
 		xstrcat(out, tmp_line);
 	}
 
-	/****** Line 29 (optional) ******/
+	/****** Line 30 (optional) ******/
 	if (job_ptr->batch_flag) {
 		if (one_liner)
 			xstrcat(out, " ");
@@ -1066,7 +1090,7 @@ line15:
 		xstrfmtcat(out, "StdErr=%s", tmp_line);
 	}
 
-	/****** Line 30 (optional) ******/
+	/****** Line 31 (optional) ******/
 	if (job_ptr->batch_flag) {
 		if (one_liner)
 			xstrcat(out, " ");
@@ -1076,7 +1100,7 @@ line15:
 		xstrfmtcat(out, "StdIn=%s", tmp_line);
 	}
 
-	/****** Line 31 (optional) ******/
+	/****** Line 32 (optional) ******/
 	if (job_ptr->batch_flag) {
 		if (one_liner)
 			xstrcat(out, " ");
@@ -1086,7 +1110,7 @@ line15:
 		xstrfmtcat(out, "StdOut=%s", tmp_line);
 	}
 
-	/****** Line 32 (optional) ******/
+	/****** Line 33 (optional) ******/
 	if (job_ptr->batch_script) {
 		if (one_liner)
 			xstrcat(out, " ");
@@ -1096,7 +1120,7 @@ line15:
 		xstrcat(out, job_ptr->batch_script);
 	}
 
-	/****** Line 33 (optional) ******/
+	/****** Line 34 (optional) ******/
 	if (job_ptr->req_switch) {
 		char time_buf[32];
 		if (one_liner)
@@ -1110,7 +1134,7 @@ line15:
 		xstrcat(out, tmp_line);
 	}
 
-	/****** Line 34 (optional) ******/
+	/****** Line 35 (optional) ******/
 	if (job_ptr->burst_buffer) {
 		if (one_liner)
 			xstrcat(out, " ");
@@ -1121,7 +1145,7 @@ line15:
 		xstrcat(out, tmp_line);
 	}
 
-	/****** Line 35 (optional) ******/
+	/****** Line 36 (optional) ******/
 	if (cpu_freq_debug(NULL, NULL, tmp1, sizeof(tmp1),
 			   job_ptr->cpu_freq_gov, job_ptr->cpu_freq_min,
 			   job_ptr->cpu_freq_max, NO_VAL) != 0) {
@@ -1132,7 +1156,36 @@ line15:
 		xstrcat(out, tmp1);
 	}
 
-	/****** Line 36 (optional) ******/
+	/****** Line 37 ******/
+	if (one_liner)
+		xstrcat(out, " ");
+	else
+		xstrcat(out, "\n   ");
+	snprintf(tmp_line, sizeof(tmp_line),
+		 "Power=%s SICP=%u",
+		 power_flags_str(job_ptr->power_flags), job_ptr->sicp_mode);
+	xstrcat(out, tmp_line);
+
+	/****** Line 38 (optional) ******/
+	if (job_ptr->bitflags) {
+		if (one_liner)
+			xstrcat(out, " ");
+		else
+			xstrcat(out, "\n   ");
+		if (job_ptr->bitflags & KILL_INV_DEP) {
+			snprintf(tmp_line,
+				 sizeof(tmp_line),
+				 "KillOInInvalidDependent=Yes");
+		}
+		if (job_ptr->bitflags & NO_KILL_INV_DEP) {
+			snprintf(tmp_line,
+				 sizeof(tmp_line),
+				 "KillOInInvalidDependent=No");
+		}
+		xstrcat(out, tmp_line);
+	}
+
+	/****** END OF JOB RECORD ******/
 	if (one_liner)
 		xstrcat(out, "\n");
 	else
@@ -1572,4 +1625,151 @@ extern int slurm_job_cpus_allocated_on_node(job_resources_t *job_resrcs_ptr,
 		return (0); /* No cpus allocated on this node */
 
 	return slurm_job_cpus_allocated_on_node_id(job_resrcs_ptr, node_id);
+}
+
+int slurm_job_cpus_allocated_str_on_node_id(char *cpus,
+					    size_t cpus_len,
+					    job_resources_t *job_resrcs_ptr,
+					    int node_id)
+{
+	int start_node = -1; /* start with -1 less so the array reps
+			      * lines up correctly */
+	uint32_t threads = 1;
+	int inx = 0;
+	bitstr_t *cpu_bitmap;
+	int j, k, bit_inx, bit_reps;
+
+	if (!job_resrcs_ptr || node_id < 0)
+		slurm_seterrno_ret(EINVAL);
+
+	/* find index in sock_core_rep_count[] for this node id
+	 */
+	do {
+		start_node += job_resrcs_ptr->sock_core_rep_count[inx];
+		inx++;
+	} while (start_node < node_id);
+	/* back to previous index since inx is always one step further
+	 * after previous loop
+	 */
+	inx--;
+
+	bit_reps = job_resrcs_ptr->sockets_per_node[inx] *
+		job_resrcs_ptr->cores_per_socket[inx];
+
+	/* get the number of threads per core on this node
+	 */
+	if (job_node_ptr)
+		threads = job_node_ptr->node_array[node_id].threads;
+	bit_inx = 0;
+	cpu_bitmap = bit_alloc(bit_reps * threads);
+	for (j = 0; j < bit_reps; j++) {
+		if (bit_test(job_resrcs_ptr->core_bitmap, bit_inx)){
+			for (k = 0; k < threads; k++)
+				bit_set(cpu_bitmap,
+					(j * threads) + k);
+		}
+		bit_inx++;
+	}
+	bit_fmt(cpus, cpus_len, cpu_bitmap);
+	FREE_NULL_BITMAP(cpu_bitmap);
+
+	return SLURM_SUCCESS;
+}
+
+int slurm_job_cpus_allocated_str_on_node(char *cpus,
+					 size_t cpus_len,
+					 job_resources_t *job_resrcs_ptr,
+					 const char *node)
+{
+	hostlist_t node_hl;
+	int node_id;
+
+	if (!job_resrcs_ptr || !node || !job_resrcs_ptr->nodes)
+		slurm_seterrno_ret(EINVAL);
+
+	node_hl = hostlist_create(job_resrcs_ptr->nodes);
+	node_id = hostlist_find(node_hl, node);
+	hostlist_destroy(node_hl);
+	if (node_id == -1)
+		return SLURM_ERROR;
+
+	return slurm_job_cpus_allocated_str_on_node_id(cpus,
+						       cpus_len,
+						       job_resrcs_ptr,
+						       node_id);
+}
+
+/*
+ * slurm_network_callerid - issue RPC to get the job id of a job from a remote
+ * slurmd based upon network socket information.
+ *
+ * IN req - Information about network connection in question
+ * OUT job_id -  ID of the job or NO_VAL
+ * OUT node_name - name of the remote slurmd
+ * IN node_name_size - size of the node_name buffer
+ * RET SLURM_PROTOCOL_SUCCESS or SLURM_FAILURE on error
+ */
+extern int
+slurm_network_callerid (network_callerid_msg_t req, uint32_t *job_id,
+	char *node_name, int node_name_size)
+{
+	int rc;
+	slurm_msg_t resp_msg;
+	slurm_msg_t req_msg;
+	network_callerid_resp_t *resp;
+	struct sockaddr_in addr;
+	uint32_t target_slurmd; /* change for IPv6 support */
+
+	debug("slurm_network_callerid RPC: start");
+
+	slurm_msg_t_init(&req_msg);
+	slurm_msg_t_init(&resp_msg);
+
+	/* ip_src is the IP we want to talk to. Hopefully there's a slurmd
+	 * listening there */
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = req.af;
+
+	/* TODO: until IPv6 support is added to Slurm, we must hope that the
+	 * other end is IPv4 */
+	if (req.af == AF_INET6) {
+		error("IPv6 is not yet supported in Slurm");
+		/* For testing IPv6 callerid prior to Slurm IPv6 RPC support,
+		 * set a sane target, uncomment the following and comment out
+		 * the return code:
+		addr.sin_family = AF_INET;
+		target_slurmd = inet_addr("127.0.0.1"); //choose a test target
+		*/
+		return SLURM_FAILURE;
+	} else
+		memcpy(&target_slurmd, req.ip_src, 4);
+
+	addr.sin_addr.s_addr = target_slurmd;
+	addr.sin_port = htons(slurm_get_slurmd_port());
+	req_msg.address = addr;
+
+	req_msg.msg_type = REQUEST_NETWORK_CALLERID;
+	req_msg.data     = &req;
+
+	if (slurm_send_recv_node_msg(&req_msg, &resp_msg, 0) < 0)
+		return SLURM_ERROR;
+
+	switch (resp_msg.msg_type) {
+		case RESPONSE_NETWORK_CALLERID:
+			resp = (network_callerid_resp_t*)resp_msg.data;
+			*job_id = resp->job_id;
+			strncpy(node_name, resp->node_name, node_name_size);
+			break;
+		case RESPONSE_SLURM_RC:
+			rc = ((return_code_msg_t *) resp_msg.data)->return_code;
+			if (rc)
+				slurm_seterrno_ret(rc);
+			break;
+		default:
+			slurm_seterrno_ret(SLURM_UNEXPECTED_MSG_ERROR);
+			break;
+	}
+
+	slurm_free_network_callerid_msg(resp_msg.data);
+	return SLURM_PROTOCOL_SUCCESS;
 }

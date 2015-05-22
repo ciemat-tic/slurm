@@ -686,13 +686,6 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->health_check_program);
 	list_append(ret_list, key_pair);
 
-	if (cluster_flags & CLUSTER_FLAG_XCPU) {
-		key_pair = xmalloc(sizeof(config_key_pair_t));
-		key_pair->name = xstrdup("HAVE_XCPU");
-		key_pair->value = xstrdup("1");
-		list_append(ret_list, key_pair);
-	}
-
 	snprintf(tmp_str, sizeof(tmp_str), "%u sec",
 		 slurm_ctl_conf_ptr->inactive_limit);
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -809,6 +802,11 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("LaunchParameters");
+	key_pair->value = xstrdup(slurm_ctl_conf_ptr->launch_params);
+	list_append(ret_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("LaunchType");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->launch_type);
 	list_append(ret_list, key_pair);
@@ -919,6 +917,11 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("MpiParams");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->mpi_params);
+	list_append(ret_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("MsgAggregationParams");
+	key_pair->value = xstrdup(slurm_ctl_conf_ptr->msg_aggr_params);
 	list_append(ret_list, key_pair);
 
 	if (cluster_flags & CLUSTER_FLAG_MULTSD) {
@@ -1085,6 +1088,13 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("Prolog");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->prolog);
+	list_append(ret_list, key_pair);
+
+	snprintf(tmp_str, sizeof(tmp_str), "%u",
+		 slurm_ctl_conf_ptr->prolog_epilog_timeout);
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("PrologEpilogTimeout");
+	key_pair->value = xstrdup(tmp_str);
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1366,16 +1376,16 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->srun_epilog);
 	list_append(ret_list, key_pair);
 
-	if (slurm_ctl_conf_ptr->srun_port_range[0] != 0
-	    && slurm_ctl_conf_ptr->srun_port_range[1] != 0) {
-		key_pair = xmalloc(sizeof(config_key_pair_t));
-		key_pair->name = xstrdup("SrunPortRange");
-		key_pair->value = xmalloc(16 * sizeof(char));
-		sprintf(key_pair->value, "%u-%u",
-			slurm_ctl_conf_ptr->srun_port_range[0],
-			slurm_ctl_conf_ptr->srun_port_range[1]);
-		list_append(ret_list, key_pair);
-	}
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("SrunPortRange");
+	key_pair->value = xstrdup_printf("%u-%u",
+			(slurm_ctl_conf_ptr->srun_port_range &&
+			 slurm_ctl_conf_ptr->srun_port_range[0] != 0) ?
+				slurm_ctl_conf_ptr->srun_port_range[0] : 0,
+			(slurm_ctl_conf_ptr->srun_port_range &&
+			 slurm_ctl_conf_ptr->srun_port_range[1] != 0) ?
+				slurm_ctl_conf_ptr->srun_port_range[1] : 0);
+	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SrunProlog");
@@ -1461,6 +1471,11 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("TmpFS");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->tmp_fs);
+	list_append(ret_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("TopologyParam");
+	key_pair->value = xstrdup(slurm_ctl_conf_ptr->topology_param);
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));

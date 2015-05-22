@@ -65,20 +65,21 @@
 #include "slurm/slurm.h"
 
 #include "src/common/cpu_frequency.h"
+#include "src/common/eio.h"
+#include "src/common/fd.h"
+#include "src/common/forward.h"
 #include "src/common/hostlist.h"
+#include "src/common/mpi.h"
+#include "src/common/net.h"
+#include "src/common/plugstack.h"
+#include "src/common/slurm_auth.h"
+#include "src/common/slurm_cred.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/slurm_time.h"
+#include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/eio.h"
-#include "src/common/net.h"
-#include "src/common/fd.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/forward.h"
-#include "src/common/plugstack.h"
-#include "src/common/slurm_cred.h"
-#include "src/common/mpi.h"
-#include "src/common/uid.h"
 
 #include "src/api/step_launch.h"
 #include "src/api/step_ctx.h"
@@ -597,16 +598,19 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 				sls->abort_action_taken = true;
 			}
 			if (!time_set) {
+				uint16_t kill_wait;
 				/* Only set the time once, because we only want
 				 * to wait STEP_ABORT_TIME, no matter how many
 				 * times the condition variable is signalled.
 				 */
-				ts.tv_sec = time(NULL) + STEP_ABORT_TIME;
+				kill_wait = slurm_get_kill_wait();
+				ts.tv_sec = time(NULL) + STEP_ABORT_TIME
+					+ kill_wait;
 				time_set = true;
 				/* FIXME - should this be a callback? */
 				info("Job step aborted: Waiting up to "
 				     "%d seconds for job step to finish.",
-				     STEP_ABORT_TIME);
+				     kill_wait + STEP_ABORT_TIME);
 			}
 
 			errnum = pthread_cond_timedwait(&sls->cond,
@@ -1740,7 +1744,7 @@ _exec_prog(slurm_msg_t *msg)
 	}
 	if (checkpoint) {
 		/* OpenMPI specific checkpoint support */
-		info("Checkpoint started at %s", slurm_ctime(&now));
+		info("Checkpoint started at %s", slurm_ctime2(&now));
 		for (i=0; (exec_msg->argv[i] && (i<2)); i++) {
 			argv[i] = exec_msg->argv[i];
 		}
@@ -1787,10 +1791,10 @@ fini:	if (checkpoint) {
 		now = time(NULL);
 		if (exit_code) {
 			info("Checkpoint completion code %d at %s",
-			     exit_code, slurm_ctime(&now));
+			     exit_code, slurm_ctime2(&now));
 		} else {
 			info("Checkpoint completed successfully at %s",
-			     slurm_ctime(&now));
+			     slurm_ctime2(&now));
 		}
 		if (buf[0])
 			info("Checkpoint location: %s", buf);

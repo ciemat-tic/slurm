@@ -37,11 +37,12 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+#include <grp.h>
 
-#include "src/sacctmgr/sacctmgr.h"
+#include "src/common/slurm_time.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/uid.h"
-#include <grp.h>
+#include "src/sacctmgr/sacctmgr.h"
 
 static uint32_t _decode_node_state(char *val)
 {
@@ -425,7 +426,8 @@ static int _set_cond(int *start, int argc, char *argv[],
 		if (!event_cond->state_list) {
 			struct tm start_tm;
 
-			if (!localtime_r(&event_cond->period_start, &start_tm)) {
+			if (!slurm_localtime_r(&event_cond->period_start,
+					       &start_tm)) {
 				fprintf(stderr,
 					" Couldn't get localtime from %ld",
 					(long)event_cond->period_start);
@@ -437,7 +439,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 			start_tm.tm_hour = 0;
 			start_tm.tm_mday--;
 			start_tm.tm_isdst = -1;
-			event_cond->period_start = mktime(&start_tm);
+			event_cond->period_start = slurm_mktime(&start_tm);
 		}
 	}
 
@@ -470,11 +472,12 @@ extern int sacctmgr_list_event(int argc, char *argv[])
                 struct tm start_tm;
 		event_cond->period_start = time(NULL);
 
-                if (!localtime_r(&event_cond->period_start, &start_tm)) {
+                if (!slurm_localtime_r(&event_cond->period_start,
+				       &start_tm)) {
                         fprintf(stderr,
                                 " Couldn't get localtime from %ld",
                                 (long)event_cond->period_start);
-                        exit_code=1;
+                        exit_code = 1;
                         return 0;
                 }
                 start_tm.tm_sec = 0;
@@ -482,7 +485,7 @@ extern int sacctmgr_list_event(int argc, char *argv[])
                 start_tm.tm_hour = 0;
                 start_tm.tm_mday--;
                 start_tm.tm_isdst = -1;
-                event_cond->period_start = mktime(&start_tm);
+                event_cond->period_start = slurm_mktime(&start_tm);
         }
 
 	for (i=0; i<argc; i++) {
@@ -573,7 +576,8 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 			field->name = xstrdup("Node Name");
 			field->len = -15;
 			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("Reason", object, MAX(command_len, 1))) {
+		} else if (!strncasecmp("Reason", object,
+					MAX(command_len, 1))) {
 			field->type = PRINT_REASON;
 			field->name = xstrdup("Reason");
 			field->len = 30;
@@ -594,6 +598,12 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 			field->type = PRINT_STATE;
 			field->name = xstrdup("State");
 			field->len = 6;
+			field->print_routine = print_fields_str;
+		} else if (!strncasecmp("TRES", object,
+					MAX(command_len, 2))) {
+			field->type = PRINT_TRES;
+			field->name = xstrdup("TRES");
+			field->len = 20;
 			field->print_routine = print_fields_str;
 		} else if (!strncasecmp("User", object, MAX(command_len, 1))) {
 			field->type = PRINT_USER;
@@ -640,6 +650,7 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 		int curr_inx = 1;
 		char tmp[20], *tmp_char;
 		time_t newend = event->period_end;
+
 		while((field = list_next(itr2))) {
 			switch(field->type) {
 			case PRINT_CLUSTER:
@@ -653,8 +664,12 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 					(curr_inx == field_count));
 				break;
 			case PRINT_CPUS:
-				convert_num_unit((float)event->cpu_count,
-						 tmp, sizeof(tmp), UNIT_NONE);
+				convert_num_unit(
+					(float)slurmdb_find_tres_count_in_string(
+						event->tres_str, TRES_CPU),
+					tmp, sizeof(tmp),
+					UNIT_NONE);
+
 				field->print_routine(
 					field,
 					tmp,
@@ -717,6 +732,25 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 				field->print_routine(field,
 						     tmp_char,
 						     (curr_inx == field_count));
+				break;
+			case PRINT_TRES:
+				if (!g_tres_list) {
+					slurmdb_tres_cond_t tres_cond;
+					memset(&tres_cond, 0,
+					       sizeof(slurmdb_tres_cond_t));
+					tres_cond.with_deleted = 1;
+					g_tres_list = slurmdb_tres_get(
+						db_conn, &tres_cond);
+				}
+
+				tmp_char = slurmdb_make_tres_string_from_simple(
+					event->tres_str, g_tres_list);
+
+				field->print_routine(
+					field,
+					tmp_char,
+					(curr_inx == field_count));
+				xfree(tmp_char);
 				break;
 			case PRINT_USER:
 				if (event->reason_uid != NO_VAL) {

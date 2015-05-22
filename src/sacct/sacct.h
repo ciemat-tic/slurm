@@ -69,7 +69,7 @@
 #define BRIEF_COMP_FIELDS "jobid,uid,state"
 #define DEFAULT_FIELDS "jobid,jobname,partition,account,alloccpus,state,exitcode"
 #define DEFAULT_COMP_FIELDS "jobid,uid,jobname,partition,nnodes,nodelist,state,end"
-#define LONG_FIELDS "jobid,jobname,partition,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,alloccpus,elapsed,state,exitcode,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,reqmem,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite,allocgres,reqgres"
+#define LONG_FIELDS "jobid,jobidraw,jobname,partition,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,alloccpus,elapsed,state,exitcode,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,reqmem,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite,allocgres,reqgres,tres"
 
 #define LONG_COMP_FIELDS "jobid,uid,jobname,partition,nnodes,nodelist,state,start,end,timelimit"
 
@@ -95,6 +95,7 @@ typedef enum {
 		PRINT_ACCOUNT,
 		PRINT_ALLOC_CPUS,
 		PRINT_ALLOC_GRES,
+		PRINT_TRES,
 		PRINT_ASSOCID,
 		PRINT_AVECPU,
 		PRINT_ACT_CPUFREQ,
@@ -168,7 +169,7 @@ typedef enum {
 		PRINT_USER,
 		PRINT_USERCPU,
 		PRINT_WCKEY,
-		PRINT_WCKEYID,
+		PRINT_WCKEYID
 } sacct_print_types_t;
 
 typedef struct {
@@ -188,11 +189,11 @@ extern print_field_t fields[];
 extern sacct_parameters_t params;
 
 extern List jobs;
-
 extern List print_fields_list;
 extern ListIterator print_fields_itr;
 extern int field_count;
 extern List g_qos_list;
+extern List g_tres_list;
 
 /* process.c */
 char *find_hostname(uint32_t pos, char *hosts);

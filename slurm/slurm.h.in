@@ -228,6 +228,8 @@ typedef struct sbcast_cred sbcast_cred_t;		/* opaque data type */
 
 /* Job step ID of batch scripts */
 #define SLURM_BATCH_SCRIPT (0xfffffffe)
+/* Job step ID of external process container */
+#define SLURM_EXTERN_CONT  (0xffffffff)
 
 /* How many seconds to wait after eio_signal_shutdown() is called before
  * terminating the job and abandoning any I/O remaining to be processed.
@@ -286,20 +288,23 @@ enum job_states {
 #define JOB_REQUEUE      0x0400 /* Requeue job in completing state */
 #define JOB_STOPPED      0x0200	/* Job is stopped state (holding resources,
 				 * but sent SIGSTOP */
+#define JOB_LAUNCH_FAILED 0x0100
 
 #define READY_JOB_FATAL	   -2	/* fatal error */
 #define READY_JOB_ERROR    -1	/* ordinary error */
 #define READY_NODE_STATE 0x01	/* node is ready */
 #define READY_JOB_STATE  0x02	/* job is ready to execute */
 
-#define MAIL_JOB_BEGIN    0x0001	/* notify when job begins */
-#define MAIL_JOB_END      0x0002	/* notify when job ends */
-#define MAIL_JOB_FAIL     0x0004	/* notify if job fails */
-#define MAIL_JOB_REQUEUE  0x0008	/* notify if job requeued */
-#define MAIL_JOB_TIME100  0x0010	/* notify on reaching 100% of time limit */
-#define MAIL_JOB_TIME90   0x0020	/* notify on reaching 90% of time limit */
-#define MAIL_JOB_TIME80   0x0040	/* notify on reaching 80% of time limit */
-#define MAIL_JOB_TIME50   0x0080	/* notify on reaching 50% of time limit */
+#define MAIL_JOB_BEGIN     0x0001	/* Notify when job begins */
+#define MAIL_JOB_END       0x0002	/* Notify when job ends */
+#define MAIL_JOB_FAIL      0x0004	/* Notify if job fails */
+#define MAIL_JOB_REQUEUE   0x0008	/* Notify if job requeued */
+#define MAIL_JOB_TIME100   0x0010	/* Notify on reaching 100% of time limit */
+#define MAIL_JOB_TIME90    0x0020	/* Notify on reaching 90% of time limit */
+#define MAIL_JOB_TIME80    0x0040	/* Notify on reaching 80% of time limit */
+#define MAIL_JOB_TIME50    0x0080	/* Notify on reaching 50% of time limit */
+#define MAIL_JOB_STAGE_OUT 0x0100	/* Notify on completion of burst buffer
+					 * stage out */
 
 #define NICE_OFFSET 10000	/* offset for job's nice value */
 
@@ -593,22 +598,22 @@ typedef enum task_dist_states {
 
 typedef enum cpu_bind_type {	/* cpu binding type from --cpu_bind=... */
 	/* verbose can be set with any other flag */
-	CPU_BIND_VERBOSE   = 0x01, /* =v, */
+	CPU_BIND_VERBOSE    = 0x0001, /* =v, */
 	/* the following auto-binding flags are mutually exclusive */
-	CPU_BIND_TO_THREADS= 0x02, /* =threads */
-	CPU_BIND_TO_CORES  = 0x04, /* =cores */
-	CPU_BIND_TO_SOCKETS= 0x08, /* =sockets */
-	CPU_BIND_TO_LDOMS  = 0x10, /* locality domains */
-	CPU_BIND_TO_BOARDS = 0x1000, /* =boards */
+	CPU_BIND_TO_THREADS = 0x0002, /* =threads */
+	CPU_BIND_TO_CORES   = 0x0004, /* =cores */
+	CPU_BIND_TO_SOCKETS = 0x0008, /* =sockets */
+	CPU_BIND_TO_LDOMS   = 0x0010, /* locality domains */
+	CPU_BIND_TO_BOARDS  = 0x1000, /* =boards */
 	/* the following manual binding flags are mutually exclusive */
 	/* CPU_BIND_NONE needs to be the lowest value among manual bindings */
-	CPU_BIND_NONE	   = 0x20, /* =no */
-	CPU_BIND_RANK  	   = 0x40, /* =rank */
-	CPU_BIND_MAP	   = 0x80, /* =map_cpu:<list of CPU IDs> */
-	CPU_BIND_MASK	   = 0x100,/* =mask_cpu:<list of CPU masks> */
-	CPU_BIND_LDRANK    = 0x200,/* =locality domain rank */
-	CPU_BIND_LDMAP	   = 0x400,/* =map_ldom:<list of locality domains> */
-	CPU_BIND_LDMASK	   = 0x800,/* =mask_ldom:<list of ldom masks> */
+	CPU_BIND_NONE	    = 0x0020, /* =no */
+	CPU_BIND_RANK  	    = 0x0040, /* =rank */
+	CPU_BIND_MAP	    = 0x0080, /* =map_cpu:<list of CPU IDs> */
+	CPU_BIND_MASK	    = 0x0100, /* =mask_cpu:<list of CPU masks> */
+	CPU_BIND_LDRANK     = 0x0200, /* =locality domain rank */
+	CPU_BIND_LDMAP	    = 0x0400, /* =map_ldom:<list of locality domains> */
+	CPU_BIND_LDMASK	    = 0x0800, /* =mask_ldom:<list of ldom masks> */
 
 	/* the following is used primarily for the
 	   --hint=nomultithread when -mblock:block is requested. */
@@ -617,7 +622,12 @@ typedef enum cpu_bind_type {	/* cpu binding type from --cpu_bind=... */
 
 	/* the following is used only as a flag for expressing
 	 * the contents of TaskPluginParams */
-	CPU_BIND_CPUSETS   = 0x8000
+	CPU_BIND_CPUSETS   = 0x8000,
+
+	/* default binding if auto binding doesn't match. */
+	CPU_AUTO_BIND_TO_THREADS = 0x04000,
+	CPU_AUTO_BIND_TO_CORES   = 0x10000,
+	CPU_AUTO_BIND_TO_SOCKETS = 0x20000
 } cpu_bind_type_t;
 
 /* Flag to indicate that cpu_freq is a range: low,medium,high,high-1
@@ -800,7 +810,14 @@ enum ctx_keys {
 						 * running jobs, not only the
 						 * pending jobs. */
 #define PRIORITY_FLAGS_FAIR_TREE	0x0020	/* Prioritize by level in
-+						 * account hierarchy. */
+						 * account hierarchy. */
+/* These bits are set in job_desc_msg_t and are used by the
+ * slurmctld. The first two bits indicate if job should be canceled
+ * if it has invalid dependency or should stay pending indefinitely.
+ */
+#define KILL_INV_DEP       0x01
+#define NO_KILL_INV_DEP    0x02
+
 /*****************************************************************************\
  *      SLURM HOSTLIST FUNCTIONS
 \*****************************************************************************/
@@ -1101,6 +1118,8 @@ typedef bitstr_t bitoff_t;
 #define ALLOC_SID_ADMIN_HOLD	0x00000001	/* admin job hold */
 #define ALLOC_SID_USER_HOLD	0x00000002	/* user job hold */
 
+#define SLURM_POWER_FLAGS_LEVEL 0x0001		/* Equal power cap on all nodes */
+
 /*****************************************************************************\
  *	PROTOCOL DATA STRUCTURE DEFINITIONS
 \*****************************************************************************/
@@ -1127,9 +1146,19 @@ typedef struct ext_sensors_data {
 
 typedef struct power_mgmt_data {
 	uint32_t cap_watts;	/* power consumption limit of node, in watts */
-	/* More data likely in the future */
+	uint32_t current_watts;	/* current power consumption, in watts */
+	uint64_t joule_counter;	/* total energy consumption by node, in joules */
+	uint32_t new_cap_watts;	/* new power consumption limit of node, in watts */
+	uint32_t max_watts;	/* maximum power consumption by node, in watts */
+	uint32_t min_watts;	/* minimum power consumption by node, in watts */
+	time_t new_job_time;	/* set when a new job has been scheduled on the
+				 * node, used to trigger higher cap */
+	uint16_t state;		/* Power state information */
+	uint64_t time_usec;	/* Data timestamp in microseconds since start
+				 * of the day */
 } power_mgmt_data_t;
 
+#define CORE_SPEC_THREAD 0x8000	/* If set, this is a thread count not core count */
 typedef struct job_descriptor {	/* For submit, allocate, and update requests */
 	char *account;		/* charge to specified account */
 	char *acctg_freq;	/* accounting polling intervals (seconds) */
@@ -1147,13 +1176,16 @@ typedef struct job_descriptor {	/* For submit, allocate, and update requests */
 	char *array_inx;	/* job array index values */
 	void *array_bitmap;	/* NOTE: Set by slurmctld */
 	time_t begin_time;	/* delay initiation until this time */
+	uint32_t bitflags;      /* bitflags */
 	char *burst_buffer;	/* burst buffer specifications */
 	uint16_t ckpt_interval;	/* periodically checkpoint this job */
 	char *ckpt_dir;	 	/* directory to store checkpoint images */
+	char *clusters;		/* cluster names used for multi-cluster jobs */
 	char *comment;		/* arbitrary comment (used by Moab scheduler) */
 	uint16_t contiguous;	/* 1 if job requires contiguous nodes,
 				 * 0 otherwise,default=0 */
-	uint16_t core_spec;	/* specialized core count */
+	uint16_t core_spec;	/* specialized core/thread count,
+				 * see CORE_SPEC_THREAD */
 	char *cpu_bind;		/* binding map for map/mask_cpu - This
 				 * currently does not matter to the
 				 * job allocation, setting this does
@@ -1204,6 +1236,8 @@ typedef struct job_descriptor {	/* For submit, allocate, and update requests */
 				 * default in SLURM config */
 	uint16_t plane_size;	/* plane size when task_dist =
 				   SLURM_DIST_PLANE */
+	uint8_t power_flags;	/* power management flags,
+				 * see SLURM_POWER_FLAGS_ */
 	uint32_t priority;	/* relative priority of the job,
 				 * explicitly set only for user root,
 				 * 0 == held (don't initiate) */
@@ -1216,10 +1250,13 @@ typedef struct job_descriptor {	/* For submit, allocate, and update requests */
 	uint16_t requeue;	/* enable or disable job requeue option */
 	char *reservation;	/* name of reservation to use */
 	char *script;		/* the actual job script, default NONE */
-	uint16_t shared;	/* 1 if job can share nodes with other jobs,
+	uint16_t shared;	/* 2 if the job can only share nodes with other
+				 *   jobs owned by that user,
+				 * 1 if job can share nodes with other jobs,
 				 * 0 if job needs exclusive access to the node,
 				 * or NO_VAL to accept the system default.
 				 * SHARED_FORCE to eliminate user control. */
+	uint8_t sicp_mode;	/* set for inter-cluster jobs */
 	char **spank_job_env;	/* environment variables for job prolog/epilog
 				 * scripts as set by SPANK plugins */
 	uint32_t spank_job_env_size; /* element count in spank_env */
@@ -1306,6 +1343,7 @@ typedef struct job_info {
 	uint16_t batch_flag;	/* 1 if batch: queued job with script */
 	char *batch_host;	/* name of host running batch script */
 	char *batch_script;	/* contents of batch script */
+	uint32_t bitflags;      /* Various job flags */
 	uint16_t boards_per_node;  /* boards per node required by job   */
 	char *burst_buffer;	/* burst buffer specifications */
 	char *command;		/* command to be executed, built from submitted
@@ -1355,6 +1393,8 @@ typedef struct job_info {
 	uint32_t pn_min_memory; /* minimum real memory per node, default=0 */
 	uint16_t pn_min_cpus;   /* minimum # CPUs per node, default=0 */
 	uint32_t pn_min_tmp_disk; /* minimum tmp disk per node, default=0 */
+	uint8_t power_flags;	/* power management flags,
+				 * see SLURM_POWER_FLAGS_ */
 	time_t preempt_time;	/* preemption signal time */
 	time_t pre_sus_time;	/* time job ran prior to last suspend */
 	uint32_t priority;	/* relative priority of the job,
@@ -1378,6 +1418,7 @@ typedef struct job_info {
 						*/
 	uint16_t shared;	/* 1 if job can share nodes with other jobs */
 	uint16_t show_flags;	/* conveys level of details requested */
+	uint8_t sicp_mode;	/* set for inter-cluster jobs */
 	uint16_t sockets_per_board;/* sockets per board required by job */
 	uint16_t sockets_per_node; /* sockets per node required by job  */
 	time_t start_time;	/* time execution begins, actual or expected */
@@ -1392,6 +1433,7 @@ typedef struct job_info {
 	uint32_t time_limit;	/* maximum run time in minutes or INFINITE */
 	uint32_t time_min;	/* minimum run time in minutes or INFINITE */
 	uint16_t threads_per_core; /* threads per core required by job  */
+	char *tres_alloc_str;   /* tres used in the job */
 	uint32_t user_id;	/* user the job runs as */
 	uint32_t wait4switch;   /* Maximum time to wait for minimum switches */
 	char *wckey;            /* wckey for job */
@@ -1415,6 +1457,16 @@ typedef struct job_info_msg {
 	uint32_t record_count;	/* number of records */
 	slurm_job_info_t *job_array;	/* the job records */
 } job_info_msg_t;
+
+typedef struct sicp_info {
+	uint32_t job_id;
+	uint16_t job_state;
+} sicp_info_t;
+
+typedef struct sicp_info_msg {
+	uint32_t record_count;		/* number of records */
+	sicp_info_t *sicp_array;	/* inter-cluster job records */
+} sicp_info_msg_t;
 
 typedef struct step_update_request_msg {
 	time_t end_time;	/* step end time */
@@ -1669,6 +1721,7 @@ typedef struct {
 	uint16_t state;		/* state of the step, see enum job_states */
 	uint32_t step_id;	/* step ID */
 	uint32_t time_limit;	/* step time limit */
+	char *tres_alloc_str;   /* tres used in the job */
 	uint32_t user_id;	/* user the job runs as */
 } job_step_info_t;
 
@@ -1726,6 +1779,7 @@ typedef struct node_info {
 	char *node_hostname;	/* node's hostname (optional) */
 	uint32_t node_state;	/* see enum node_states */
 	char *os;		/* operating system currently running */
+	uint32_t owner;		/* User allowed to use this node or NO_VAL */
 	uint32_t real_memory;	/* configured MB of real memory on the node */
 	char *reason;		/* reason for node being DOWN or DRAINING */
 	time_t reason_time;	/* Time stamp when reason was set, ignore if
@@ -1798,6 +1852,15 @@ typedef struct job_alloc_info_msg {
 	uint32_t job_id;	/* job ID */
 } job_alloc_info_msg_t;
 
+typedef struct layout_info_msg {
+	uint32_t record_count;	/* number of char* */
+	char** records;		/* layout or list of layouts */
+} layout_info_msg_t;
+
+typedef struct update_layout_msg {
+	char* layout;
+	char* arg;
+} update_layout_msg_t;
 
 typedef struct step_alloc_info_msg {
 	uint32_t job_id;	/* job ID */
@@ -1822,6 +1885,8 @@ typedef struct acct_gather_energy_req_msg {
 #define PART_FLAG_REQ_RESV	0x0010	/* Set if reservation is required */
 #define PART_FLAG_LLN		0x0020	/* Set if least loaded node selection
 					 * is desired */
+#define PART_FLAG_EXCLUSIVE_USER 0x0040	/* Set if nodes allocated exclusively
+					 * by user */
 /* Used with slurm_update_partition() to clear flags associated with existing
  * partitions. For example, if a partition is currently hidden and you want
  * to make it visible then set flags to PART_FLAG_HIDDEN_CLR and call
@@ -1832,6 +1897,7 @@ typedef struct acct_gather_energy_req_msg {
 #define PART_FLAG_ROOT_ONLY_CLR	0x0800	/* Clear ROOT_ONLY partition flag */
 #define PART_FLAG_REQ_RESV_CLR	0x1000	/* Clear RES_REQ partition flag */
 #define PART_FLAG_LLN_CLR	0x2000	/* Clear LLN partition flag */
+#define PART_FLAG_EXC_USER_CLR	0x4000	/* Clear EXCLUSIVE_USER flag */
 
 typedef struct partition_info {
 	char *allow_alloc_nodes;/* list names of allowed allocating
@@ -2087,6 +2153,7 @@ typedef struct reserve_info {
 	char *node_list;	/* list of reserved nodes or ALL */
 	char *partition;	/* name of partition to be used */
 	time_t start_time;	/* start time of reservation */
+	char *tres_str;         /* list of TRES's used by reservation */
 	char *users;		/* names of users permitted to use */
 } reserve_info_t;
 
@@ -2114,6 +2181,7 @@ typedef struct resv_desc_msg {
 	char *node_list;	/* list of reserved nodes or ALL */
 	char *partition;	/* name of partition to be used */
 	time_t start_time;	/* start time of reservation */
+	char *tres_str;         /* list of TRES's used by reservation */
 	char *users;		/* names of users permitted to use */
 } resv_desc_msg_t;
 
@@ -2185,6 +2253,9 @@ typedef struct reservation_name_msg {
 #define DEBUG_FLAG_BURST_BUF    0x0000010000000000 /* Burst buffer plugin */
 #define DEBUG_FLAG_CPU_FREQ     0x0000020000000000 /* --cpu_freq debug */
 #define DEBUG_FLAG_POWER        0x0000040000000000 /* Power plugin debug */
+#define DEBUG_FLAG_SICP		0x0000080000000000 /* Slurm Inter-Cluster */
+#define DEBUG_FLAG_DB_ARCHIVE	0x0000100000000000 /* DBD Archiving/Purging */
+#define DEBUG_FLAG_DB_TRES      0x0000200000000000 /* Database TRES debug */
 
 #define GROUP_FORCE		0x8000	/* if set, update group membership
 					 * info even if no updates to
@@ -2211,10 +2282,12 @@ typedef struct reservation_name_msg {
 #define HEALTH_CHECK_CYCLE	0x8000	/* cycle through nodes node */
 #define HEALTH_CHECK_NODE_ANY	0x000f	/* execute on all node states */
 
-#define PROLOG_FLAG_ALLOC  0x0001 /* execute prolog upon allocation */
-#define PROLOG_FLAG_NOHOLD 0x0002 /* don't block salloc/srun until
-				   * slurmctld knows the prolog has
-				   * run on each node in the allocation */
+#define PROLOG_FLAG_ALLOC	0x0001 /* execute prolog upon allocation */
+#define PROLOG_FLAG_NOHOLD	0x0002 /* don't block salloc/srun until
+					* slurmctld knows the prolog has
+					* run on each node in the allocation */
+#define PROLOG_FLAG_CONTAIN 	0x0004 /* Use proctrack plugin to create a
+					* container upon allocation */
 
 #define LOG_FMT_ISO8601_MS      0
 #define LOG_FMT_ISO8601         1
@@ -2226,6 +2299,7 @@ typedef struct reservation_name_msg {
 
 typedef struct slurm_ctl_conf {
 	time_t last_update;	/* last update time of the build parameters */
+	char *accounting_storage_tres; /* list of tres */
 	uint16_t accounting_storage_enforce; /* job requires valid association:
 					      * user/account/partition/cluster */
 	char *accounting_storage_backup_host;	/* accounting storage
@@ -2314,6 +2388,7 @@ typedef struct slurm_ctl_conf {
 				    * the processes is aborted or crashed */
 	uint16_t kill_wait;	/* seconds between SIGXCPU to SIGKILL
 				 * on job termination */
+	char *launch_params;	/* step launcher plugin options */
 	char *launch_type;	/* type of step launcher to use */
 	char *layouts;		/* comma separted list of layouts plugins */
 	char *licenses;		/* licenses available on this cluster */
@@ -2327,10 +2402,11 @@ typedef struct slurm_ctl_conf {
 	uint32_t max_step_cnt;	/* maximum number of steps per job */
 	uint16_t max_tasks_per_node; /* maximum tasks per node */
 	uint16_t mem_limit_enforce; /* Enforce mem limit at runtime y|n */
-	uint16_t min_job_age;	/* COMPLETED jobs over this age (secs)
+	uint32_t min_job_age;	/* COMPLETED jobs over this age (secs)
 				 * purged from in memory records */
 	char *mpi_default;	/* Default version of MPI in use */
 	char *mpi_params;	/* MPI parameters */
+	char *msg_aggr_params;  /* Message aggregation parameters */
 	uint16_t msg_timeout;	/* message timeout */
 	uint32_t next_job_id;	/* next slurm generated job_id to assign */
 	char *node_prefix;      /* prefix of nodes in partition, only set in
@@ -2365,6 +2441,7 @@ typedef struct slurm_ctl_conf {
 				 * see PRIVATE_DATA_* */
 	char *proctrack_type;	/* process tracking plugin type */
 	char *prolog;		/* pathname of job prolog run by slurmd */
+	uint16_t prolog_epilog_timeout; /* prolog/epilog timeout */
 	char *prolog_slurmctld;	/* pathname of job prolog run by slurmctld */
 	uint16_t propagate_prio_process; /* process priority propagation,
 					  * see PROP_PRIO_* */
@@ -2438,9 +2515,10 @@ typedef struct slurm_ctl_conf {
 	char *switch_type;	/* switch or interconnect type */
 	char *task_epilog;	/* pathname of task launch epilog */
 	char *task_plugin;	/* task launch plugin */
-	uint16_t task_plugin_param;	/* see CPU_BIND_* */
+	uint32_t task_plugin_param;	/* see CPU_BIND_* */
 	char *task_prolog;	/* pathname of task launch prolog */
 	char *tmp_fs;		/* pathname of temporary file system */
+	char *topology_param;	/* network topology parameters */
 	char *topology_plugin;	/* network topology plugin */
 	uint16_t track_wckey;    /* see if we are using wckey or not */
 	uint16_t tree_width;    /* number of threads per node to span */
@@ -2706,6 +2784,14 @@ typedef struct cache_info_msg {
 	slurm_cache_assoc_info_t *cache_assoc_array;
 } cache_info_msg_t;
 
+typedef struct network_callerid_msg {
+	unsigned char ip_src[16];
+	unsigned char ip_dst[16];
+	uint32_t port_src;
+	uint32_t port_dst;
+	int32_t af;	// NOTE: un/packed as uint32_t
+} network_callerid_msg_t;
+
 /*****************************************************************************\
  *	RESOURCE ALLOCATION FUNCTIONS
 \*****************************************************************************/
@@ -2930,12 +3016,8 @@ extern int slurm_kill_job_step PARAMS((uint32_t job_id, uint32_t step_id,
 /*
  * slurm_kill_job2()
  */
-extern int slurm_kill_job2 PARAMS((const char *, uint16_t, uint16_t));
-
-/*
- * slurm_kill_job_step2()
- */
-extern int slurm_kill_job_step2 PARAMS((const char *, uint16_t, uint16_t));
+extern int slurm_kill_job2 PARAMS((const char *job_id, uint16_t signal,
+				   uint16_t flags));
 
 /*
  * slurm_signal_job - send the specified signal to all steps of an existing job
@@ -3284,6 +3366,34 @@ extern int slurm_job_cpus_allocated_on_node_id PARAMS(
  */
 extern int slurm_job_cpus_allocated_on_node PARAMS(
 	(job_resources_t *job_resrcs_ptr, const char *node_name));
+
+/*
+ * slurm_job_cpus_allocated_str_on_node_id -
+ *                        get the string representation of cpus allocated
+ *                        to a job on a node by node id
+ * IN cpus		- str where the resulting cpu list is returned
+ * IN cpus_len		- max size of cpus str
+ * IN job_resrcs_ptr	- pointer to job_resources structure
+ * IN node_id		- zero-origin node id in allocation
+ * RET 0 on success or -1 on error
+ */
+extern int slurm_job_cpus_allocated_str_on_node_id PARAMS(
+	(char *cpus, size_t cpus_len,
+	 job_resources_t *job_resrcs_ptr, int node_id));
+
+/*
+ * slurm_job_cpus_allocated_str_on_node -
+ *                        get the string representation of cpus allocated
+ *                        to a job on a node by node name
+ * IN cpus		- str where the resulting cpu list is returned
+ * IN cpus_len		- max size of cpus str
+ * IN job_resrcs_ptr	- pointer to job_resources structure
+ * IN node_name		- name of node
+ * RET 0 on success or -1 on error
+ */
+extern int slurm_job_cpus_allocated_str_on_node PARAMS(
+	(char *cpus, size_t cpus_len,
+	 job_resources_t *job_resrcs_ptr, const char *node_name));
 
 /*****************************************************************************\
  *	SLURM JOB CONTROL CONFIGURATION READ/PRINT/UPDATE FUNCTIONS
@@ -3887,6 +3997,21 @@ extern int slurm_update_partition PARAMS((update_part_msg_t * part_msg));
 extern int slurm_delete_partition PARAMS((delete_part_msg_t * part_msg));
 
 /*****************************************************************************\
+ *      SLURM LAYOUT PRINT/UPDATE FUNCTIONS
+\*****************************************************************************/
+extern void slurm_print_layout_info PARAMS(
+	(FILE* out, layout_info_msg_t *layout_info_ptr, int one_liner ));
+
+extern int slurm_load_layout PARAMS(
+	(char *layout_type, char *entities, char *type,
+	 uint32_t no_relation, layout_info_msg_t **resp));
+
+extern int slurm_update_layout PARAMS((update_layout_msg_t * layout_info_msg));
+
+extern void slurm_free_layout_info_msg PARAMS(
+	(layout_info_msg_t * layout_info_msg));
+
+/*****************************************************************************\
  *	SLURM RESERVATION CONFIGURATION READ/PRINT/UPDATE FUNCTIONS
 \*****************************************************************************/
 
@@ -4421,6 +4546,21 @@ extern void slurm_print_burst_buffer_info_msg PARAMS(
 extern void slurm_print_burst_buffer_record PARAMS(
 			(FILE *out, burst_buffer_info_t *burst_buffer_ptr,
 			 int one_liner));
+
+/*
+ * slurm_network_callerid - issue RPC to get the job id of a job from a remote
+ * slurmd based upon network socket information.
+ *
+ * IN req - Information about network connection in question
+ * OUT job_id -  ID of the job or NO_VAL
+ * OUT node_name - name of the remote slurmd
+ * IN node_name_size - size of the node_name buffer
+ * RET SLURM_PROTOCOL_SUCCESS or SLURM_FAILURE on error
+ */
+extern int slurm_network_callerid PARAMS(
+		(network_callerid_msg_t req, uint32_t *job_id,
+		char *node_name, int node_name_size));
+
 
 END_C_DECLS
 

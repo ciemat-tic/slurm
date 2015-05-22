@@ -21,7 +21,7 @@ AC_DEFUN([X_AC_JSON], [
   AC_ARG_WITH(
     [json],
     AS_HELP_STRING(--with-json=PATH,Specify path to json-c installation),
-    [_x_ac_json_dirs="$withval $_x_ac_json_dirs"])
+    [x_ac_json_dirs="$withval $x_ac_json_dirs"])
 
   AC_CACHE_CHECK(
     [for json installation],
@@ -49,8 +49,8 @@ AC_DEFUN([X_AC_JSON], [
     AC_MSG_WARN([unable to locate json parser library])
   else
     AC_DEFINE([HAVE_JSON], [1], [Define if you are compiling with json.])
-    JSON_CPPFLAGS="-I$x_ac_cv_json_dir/include/json-c"
-    JSON_LDFLAGS="-L$x_ac_cv_json_dir -ljson-c"
+    JSON_CPPFLAGS="-I$x_ac_cv_json_dir/include"
+    JSON_LDFLAGS="-L$x_ac_cv_json_dir/$bit -ljson-c"
   fi
 
   AC_SUBST(JSON_CPPFLAGS)

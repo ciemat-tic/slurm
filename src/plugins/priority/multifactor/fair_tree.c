@@ -44,7 +44,7 @@
 
 #include "fair_tree.h"
 
-static void _ft_decay_apply_new_usage(struct job_record *job, time_t *start);
+static int  _ft_decay_apply_new_usage(struct job_record *job, time_t *start);
 static void _apply_priority_fs(void);
 
 /* Fair Tree code called from the decay thread loop */
@@ -53,7 +53,8 @@ extern void fair_tree_decay(List jobs, time_t start)
 	slurmctld_lock_t job_write_lock =
 		{ NO_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK };
 	assoc_mgr_lock_t locks =
-		{ WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+		{ WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK,
+		  NO_LOCK, NO_LOCK, NO_LOCK };
 
 	/* apply decayed usage */
 	lock_slurmctld(job_write_lock);
@@ -88,18 +89,14 @@ static void _ft_set_assoc_usage_efctv(slurmdb_assoc_rec_t *assoc)
 
 
 /* Apply usage with decay factor. Call standard functions */
-static void _ft_decay_apply_new_usage(struct job_record *job, time_t *start)
+static int _ft_decay_apply_new_usage(struct job_record *job, time_t *start)
 {
-	if (!decay_apply_new_usage(job, start))
-		return;
+	/* Always return SUCCESS so that list_for_each will
+	 * continue processing list of jobs. For this reason,
+	 * don't call decay_apply_new_usage() directly. */
+	decay_apply_new_usage(job, start);
 
-	/* Priority 0 is reserved for held jobs. Also skip priority
-	 * calculation for non-pending jobs. */
-	if ((job->priority == 0) || !IS_JOB_PENDING(job))
-		return;
-
-	set_priority_factors(*start, job);
-	last_job_update = time(NULL);
+	return SLURM_SUCCESS;
 }
 
 

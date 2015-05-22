@@ -273,7 +273,7 @@ static int _check_coord_qos(mysql_conn_t *mysql_conn, char *cluster_name,
 	MYSQL_RES *result;
 	MYSQL_ROW row;
 	int rc = SLURM_SUCCESS;
-	assoc_mgr_lock_t locks = { NO_LOCK, NO_LOCK, READ_LOCK,
+	assoc_mgr_lock_t locks = { NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
 				   NO_LOCK, NO_LOCK, NO_LOCK };
 
 	if (!qos_list || !list_count(qos_list))
@@ -950,6 +950,7 @@ static int _modify_unset_users(mysql_conn_t *mysql_conn,
 			list_iterator_destroy(qos_itr);
 			if (delta_itr)
 				list_iterator_destroy(delta_itr);
+			FREE_NULL_LIST(delta_qos_list);
 			if (list_count(mod_assoc->qos_list)
 			    || !list_count(assoc->qos_list))
 				modified = 1;
@@ -1541,7 +1542,7 @@ static int _process_modify_assoc_results(mysql_conn_t *mysql_conn,
 						    assoc->qos_list)
 				   == SLURM_ERROR) {
 				assoc_mgr_lock_t locks = {
-					NO_LOCK, NO_LOCK, READ_LOCK,
+					NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
 					NO_LOCK, NO_LOCK, NO_LOCK };
 				char *requested_qos;
 
@@ -1640,7 +1641,7 @@ static int _process_modify_assoc_results(mysql_conn_t *mysql_conn,
 			xfree(query);
 
 			if ((row2 = mysql_fetch_row(result2))) {
-				if (!assoc->def_qos_id
+				if (assoc->def_qos_id == INFINITE
 				    && row2[ASSOC2_REQ_DEF_QOS])
 					assoc->def_qos_id = slurm_atoul(
 						row2[ASSOC2_REQ_DEF_QOS]);
@@ -2093,12 +2094,12 @@ static int _cluster_get_assocs(mysql_conn_t *mysql_conn,
 		while ((row = mysql_fetch_row(result))) {
 			if (set) {
 				xstrfmtcat(extra,
-					   " || (%s between lft and rgt)",
+					   " || (%s between t1.lft and t1.rgt)",
 					   row[0]);
 			} else {
 				set = 1;
 				xstrfmtcat(extra,
-					   " && ((%s between lft and rgt)",
+					   " && ((%s between t1.lft and t1.rgt)",
 					   row[0]);
 			}
 		}
@@ -2595,7 +2596,7 @@ extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 						 object->qos_list)
 		    == SLURM_ERROR) {
 			assoc_mgr_lock_t locks = {
-				NO_LOCK, NO_LOCK, READ_LOCK,
+				NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
 				NO_LOCK, NO_LOCK, NO_LOCK };
 			char *requested_qos;
 
@@ -3090,6 +3091,7 @@ end_it:
 
 	if (rc != SLURM_ERROR) {
 		_make_sure_users_have_default(mysql_conn, added_user_list);
+		FREE_NULL_LIST(added_user_list);
 
 		if (txn_query) {
 			xstrcat(txn_query, ";");
@@ -3146,8 +3148,7 @@ end_it:
 			list_destroy(assoc_list);
 		}
 	} else {
-		if (added_user_list)
-			list_destroy(added_user_list);
+		FREE_NULL_LIST(added_user_list);
 		xfree(txn_query);
 		reset_mysql_conn(mysql_conn);
 	}

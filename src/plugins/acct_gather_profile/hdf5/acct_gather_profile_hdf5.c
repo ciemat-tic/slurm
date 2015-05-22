@@ -58,6 +58,7 @@
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/slurm_time.h"
 #include "src/slurmd/common/proctrack.h"
 #include "hdf5_api.h"
 
@@ -83,16 +84,12 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobacct/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job accounting API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[] = "AcctGatherProfile hdf5 plugin";
 const char plugin_type[] = "acct_gather_profile/hdf5";
-const uint32_t plugin_version = 100;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 hid_t typTOD;
 
@@ -373,7 +370,7 @@ extern int acct_gather_profile_p_node_step_start(stepd_step_rec_t* job)
 	put_int_attribute(gid_node, ATTR_NTASKS, g_job->node_tasks);
 	start_time = time(NULL);
 	put_string_attribute(gid_node, ATTR_STARTTIME,
-			     slurm_ctime(&start_time));
+			     slurm_ctime2(&start_time));
 
 	return rc;
 }

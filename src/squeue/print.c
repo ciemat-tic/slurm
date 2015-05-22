@@ -353,8 +353,12 @@ int print_job_from_format(squeue_job_rec_t *job_rec_ptr, List list)
 
 	}
 	if (job_rec_ptr->job_ptr->array_task_str && params.array_flag) {
+		char *p;
+
 		if (max_array_size == -1)
 			max_array_size = slurm_get_max_array_size();
+		if ((p = strchr(job_rec_ptr->job_ptr->array_task_str, '%')))
+			*p = 0;
 		bitmap = bit_alloc(max_array_size);
 		bit_unfmt(bitmap, job_rec_ptr->job_ptr->array_task_str);
 		xfree(job_rec_ptr->job_ptr->array_task_str);
@@ -465,10 +469,20 @@ int _print_job_burst_buffer(job_info_t * job, int width, bool right, char* suffi
 
 int _print_job_core_spec(job_info_t * job, int width, bool right, char* suffix)
 {
-	if (job == NULL) 	/* Print the Header instead */
+	char spec[FORMAT_STRING_SIZE];
+
+	if (job == NULL) {	/* Print the Header instead */
 		_print_str("CORE_SPEC", width, right, true);
-	else
+	} else if (job->core_spec == (uint16_t) NO_VAL) {
+		_print_str("N/A", width, right, true);
+	} else if (job->core_spec & CORE_SPEC_THREAD) {
+		snprintf(spec, FORMAT_STRING_SIZE, "%d Threads",
+			 (job->core_spec & (~CORE_SPEC_THREAD)));
+		_print_str(spec, width, right, true);
+	} else {
 		_print_int(job->core_spec, width, right, true);
+	}
+
 	return SLURM_SUCCESS;
 }
 
@@ -1016,12 +1030,14 @@ int _print_job_shared(job_info_t * job, int width, bool right_justify,
 			_print_str("no", width, right_justify, true);
 			break;
 		case 1:
-		case 2:
 			_print_str("yes", width, right_justify, true);
+			break;
+		case 2:
+			_print_str("user", width, right_justify, true);
 			break;
 		case (uint16_t)NO_VAL:
 		default:
-			_print_str("unknwn", width, right_justify, true);
+			_print_str("ok", width, right_justify, true);
 			break;
 		}
 	}
@@ -2245,7 +2261,7 @@ static int _filter_job(job_info_t * job)
 		while (token && filter) {
 			iterator = list_iterator_create(params.licenses_list);
 			while ((license = list_next(iterator))) {
-				if (strcmp(license, token) == 0) {
+				if (strstr(token, license)) {
 					filter = 0;
 					break;
 				}

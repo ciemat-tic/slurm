@@ -73,6 +73,7 @@
 #include "src/common/env.h"
 #include "src/common/gres.h"
 #include "src/common/list.h"
+#include "src/common/xcgroup_read_config.c"
 #include "src/common/xstring.h"
 
 /*
@@ -97,12 +98,12 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - Specifies the version number of the plugin. This would
- * typically be the same for all plugins.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char	plugin_name[]		= "Gres GPU plugin";
 const char	plugin_type[]		= "gres/gpu";
-const uint32_t	plugin_version		= 120;
+const uint32_t	plugin_version		= SLURM_VERSION_NUMBER;
 
 static char	gres_name[]		= "gpu";
 
@@ -207,32 +208,76 @@ extern int node_config_load(List gres_conf_list)
 }
 
 /*
+ * Test if CUDA_VISIBLE_DEVICES should be set to global device ID or a device
+ * ID that always starts at zero (based upon what the application can see).
+ * RET true if TaskPlugin=task/cgroup AND ConstrainDevices=yes (in cgroup.conf).
+ */
+static bool _use_local_device_index(void)
+{
+	slurm_cgroup_conf_t slurm_cgroup_conf;
+	char *task_plugin = slurm_get_task_plugin();
+	bool use_cgroup = false, use_local_index = false;
+
+	if (!task_plugin)
+		return use_local_index;
+
+	if (strstr(task_plugin, "cgroup"))
+		use_cgroup = true;
+	xfree(task_plugin);
+	if (!use_cgroup)
+		return use_local_index;
+
+	/* Read and parse cgroup.conf */
+	bzero(&slurm_cgroup_conf, sizeof(slurm_cgroup_conf_t));
+	if (read_slurm_cgroup_conf(&slurm_cgroup_conf) != SLURM_SUCCESS)
+		return use_local_index;
+	if (slurm_cgroup_conf.constrain_devices)
+		use_local_index = true;
+	free_slurm_cgroup_conf(&slurm_cgroup_conf);
+
+	return use_local_index;
+}
+
+/*
  * Set environment variables as appropriate for a job (i.e. all tasks) based
  * upon the job's GRES state.
  */
 extern void job_set_env(char ***job_env_ptr, void *gres_ptr)
 {
-	int i, len;
-	char *dev_list = NULL;
+	int i, len, local_inx = 0;
+	char *global_list = NULL, *local_list = NULL;
 	gres_job_state_t *gres_job_ptr = (gres_job_state_t *) gres_ptr;
+	bool use_local_dev_index = _use_local_device_index();
 
 	if ((gres_job_ptr != NULL) &&
 	    (gres_job_ptr->node_cnt == 1) &&
 	    (gres_job_ptr->gres_bit_alloc != NULL) &&
 	    (gres_job_ptr->gres_bit_alloc[0] != NULL)) {
 		len = bit_size(gres_job_ptr->gres_bit_alloc[0]);
-		for (i=0; i<len; i++) {
+		for (i = 0; i < len; i++) {
 			if (!bit_test(gres_job_ptr->gres_bit_alloc[0], i))
 				continue;
-			if (!dev_list)
-				dev_list = xmalloc(128);
-			else
-				xstrcat(dev_list, ",");
+			if (!global_list) {
+				global_list = xmalloc(128);
+				local_list  = xmalloc(128);
+			} else {
+				xstrcat(global_list, ",");
+				xstrcat(local_list,  ",");
+			}
+			if (use_local_dev_index) {
+				xstrfmtcat(local_list, "%d", local_inx++);
+			} else if (gpu_devices && (i < nb_available_files) &&
+				  (gpu_devices[i] >= 0)) {
+				xstrfmtcat(local_list, "%d", gpu_devices[i]);
+			} else {
+				xstrfmtcat(local_list, "%d", i);
+			}
 			if (gpu_devices && (i < nb_available_files) &&
-			    (gpu_devices[i] >= 0))
-				xstrfmtcat(dev_list, "%d", gpu_devices[i]);
-			else
-				xstrfmtcat(dev_list, "%d", i);
+			    (gpu_devices[i] >= 0)) {
+				xstrfmtcat(global_list, "%d", gpu_devices[i]);
+			} else {
+				xstrfmtcat(global_list, "%d", i);
+			}
 		}
 	} else if (gres_job_ptr && (gres_job_ptr->gres_cnt_alloc > 0)) {
 		/* The gres.conf file must identify specific device files
@@ -240,15 +285,19 @@ extern void job_set_env(char ***job_env_ptr, void *gres_ptr)
 		error("gres/gpu unable to set CUDA_VISIBLE_DEVICES, "
 		      "no device files configured");
 	} else {
-		xstrcat(dev_list, "NoDevFiles");
+		xstrcat(local_list, "NoDevFiles");
 	}
 
-	if (dev_list) {
+	if (global_list) {
+		env_array_overwrite(job_env_ptr,"SLURM_JOB_GPUS", global_list);
+		xfree(global_list);
+	}
+	if (local_list) {
 		env_array_overwrite(job_env_ptr,"CUDA_VISIBLE_DEVICES",
-				    dev_list);
+				    local_list);
 		env_array_overwrite(job_env_ptr,"GPU_DEVICE_ORDINAL",
-				    dev_list);
-		xfree(dev_list);
+				    local_list);
+		xfree(local_list);
 	}
 }
 
@@ -258,27 +307,31 @@ extern void job_set_env(char ***job_env_ptr, void *gres_ptr)
  */
 extern void step_set_env(char ***job_env_ptr, void *gres_ptr)
 {
-	int i, len;
+	int i, len, local_inx = 0;
 	char *dev_list = NULL;
 	gres_step_state_t *gres_step_ptr = (gres_step_state_t *) gres_ptr;
+	bool use_local_dev_index = _use_local_device_index();
 
 	if ((gres_step_ptr != NULL) &&
 	    (gres_step_ptr->node_cnt == 1) &&
 	    (gres_step_ptr->gres_bit_alloc != NULL) &&
 	    (gres_step_ptr->gres_bit_alloc[0] != NULL)) {
 		len = bit_size(gres_step_ptr->gres_bit_alloc[0]);
-		for (i=0; i<len; i++) {
+		for (i = 0; i < len; i++) {
 			if (!bit_test(gres_step_ptr->gres_bit_alloc[0], i))
 				continue;
 			if (!dev_list)
 				dev_list = xmalloc(128);
 			else
 				xstrcat(dev_list, ",");
-			if (gpu_devices && (i < nb_available_files) &&
-			    (gpu_devices[i] >= 0))
+			if (use_local_dev_index) {
+				xstrfmtcat(dev_list, "%d", local_inx++);
+			} else if (gpu_devices && (i < nb_available_files) &&
+				   (gpu_devices[i] >= 0)) {
 				xstrfmtcat(dev_list, "%d", gpu_devices[i]);
-			else
+			} else {
 				xstrfmtcat(dev_list, "%d", i);
+			}
 		}
 	} else if (gres_step_ptr && (gres_step_ptr->gres_cnt_alloc > 0)) {
 		/* The gres.conf file must identify specific device files

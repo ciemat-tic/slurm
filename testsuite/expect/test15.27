@@ -70,7 +70,7 @@ proc check_alloc { } {
 	}
 
 	# Wait a bit for sacct to populate
-	sleep 5
+	sleep 10
 
 	spawn $sacct --job=$job_id --allocation -oalloccpus --noheader
 	expect {
@@ -170,6 +170,6 @@ expect {
 check_alloc
 
 if {$exit_code == 0} {
-	send_user "\nSUCCCESS\n"
+	send_user "\nSUCCESS\n"
 }
 exit $exit_code

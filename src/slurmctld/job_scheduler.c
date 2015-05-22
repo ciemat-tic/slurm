@@ -49,6 +49,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
 
 #if HAVE_SYS_PRCTL_H
 #  include <sys/prctl.h>
@@ -60,6 +61,7 @@
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
+#include "src/common/power.h"
 #include "src/common/slurm_accounting_storage.h"
 #include "src/common/slurm_acct_gather.h"
 #include "src/common/timers.h"
@@ -78,9 +80,10 @@
 #include "src/slurmctld/preempt.h"
 #include "src/slurmctld/proc_req.h"
 #include "src/slurmctld/reservation.h"
+#include "src/slurmctld/sched_plugin.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/srun_comm.h"
-#include "src/slurmctld/sched_plugin.h"
+#include "src/slurmctld/state_save.h"
 
 #define _DEBUG 0
 #ifndef BB_STAGE_ARRAY_TASK_CNT
@@ -109,6 +112,8 @@ static bool	_job_runnable_test2(struct job_record *job_ptr,
 static void *	_run_epilog(void *arg);
 static void *	_run_prolog(void *arg);
 static bool	_scan_depend(List dependency_list, uint32_t job_id);
+static void *	_sched_agent(void *args);
+static int	_schedule(uint32_t job_limit);
 static int	_valid_feature_list(uint32_t job_id, List feature_list);
 static int	_valid_node_feature(char *feature);
 #ifndef HAVE_FRONT_END
@@ -116,6 +121,16 @@ static void *	_wait_boot(void *arg);
 #endif
 static int	build_queue_timeout = BUILD_TIMEOUT;
 static int	save_last_part_update = 0;
+
+static pthread_mutex_t sched_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int sched_pend_thread = 0;
+static bool sched_running = false;
+static struct timeval sched_last = {0, 0};
+#ifdef HAVE_ALPS_CRAY
+static int sched_min_interval = 1000000;
+#else
+static int sched_min_interval = 0;
+#endif
 
 extern diag_stats_t slurmctld_diag_stats;
 
@@ -603,11 +618,12 @@ extern bool replace_batch_job(slurm_msg_t * msg, void *fini_job)
 				/* If we don't have a db_index by now and we
 				 * are running with the slurmdbd lets put it on
 				 * the list to be handled later when it comes
-				 * back up since we won't get another chance */
-				if (with_slurmdbd && !job_ptr->db_index) {
-					jobacct_storage_g_job_start(acct_db_conn,
-								    job_ptr);
-				}
+				 * back up since we won't get another chance.
+				 * This is fine because start() doesn't wait
+				 * for db_index for a finished job.
+				 */
+				jobacct_storage_job_start_direct(acct_db_conn,
+								 job_ptr);
 				list_delete_item(job_iterator);
 			}
 			continue;
@@ -810,6 +826,9 @@ static bool _all_partition_priorities_same(void)
  *		  queue on every job submit (0 means to use the system default,
  *		  SchedulerParameters for default_queue_depth)
  * RET count of jobs scheduled
+ * Note: If the scheduler has executed recently, rather than executing again
+ *	right away, a thread will be spawned to execute later in an effort
+ *	to reduce system overhead.
  * Note: We re-build the queue every time. Jobs can not only be added
  *	or removed from the queue, but have their priority or partition
  *	changed with the update_job RPC. In general nodes will be in priority
@@ -817,10 +836,117 @@ static bool _all_partition_priorities_same(void)
  */
 extern int schedule(uint32_t job_limit)
 {
+	static int sched_job_limit = -1;
+	int job_count = 0;
+	struct timeval now;
+	long delta_t;
+
+	gettimeofday(&now, NULL);
+	if (sched_last.tv_sec == 0) {
+		delta_t = sched_min_interval;
+	} else if (sched_running) {
+		delta_t = 0;
+	} else {
+		delta_t  = (now.tv_sec  - sched_last.tv_sec) * 1000000;
+		delta_t +=  now.tv_usec - sched_last.tv_usec;
+	}
+
+	slurm_mutex_lock(&sched_mutex);
+	if (sched_job_limit == 0)
+		;				/* leave unlimited */
+	else if (job_limit == 0)
+		sched_job_limit = 0;		/* set unlimited */
+	else if (sched_job_limit == -1)
+		sched_job_limit = job_limit;	/* set initial value */
+	else
+		sched_job_limit += job_limit;	/* test more jobs */
+
+	if (delta_t >= sched_min_interval) {
+		/* Temporariy set time in the future until we get the real
+		 * scheduler completion time */
+		sched_last.tv_sec  = now.tv_sec;
+		sched_last.tv_usec = now.tv_usec;
+		sched_running = true;
+		job_limit = sched_job_limit;
+		sched_job_limit = -1;
+		slurm_mutex_unlock(&sched_mutex);
+
+		job_count = _schedule(job_limit);
+
+		slurm_mutex_lock(&sched_mutex);
+		gettimeofday(&now, NULL);
+		sched_last.tv_sec  = now.tv_sec;
+		sched_last.tv_usec = now.tv_usec;
+		sched_running = false;
+		slurm_mutex_unlock(&sched_mutex);
+	} else if (sched_pend_thread == 0) {
+		/* We don't want to run now, but also don't want to defer
+		 * this forever, so spawn a thread to run later */
+		pthread_attr_t attr_agent;
+		pthread_t thread_agent;
+		slurm_attr_init(&attr_agent);
+		if (pthread_attr_setdetachstate
+				(&attr_agent, PTHREAD_CREATE_DETACHED)) {
+			error("pthread_attr_setdetachstate error %m");
+		}
+		if (pthread_create(&thread_agent, &attr_agent, _sched_agent,
+				   NULL)) {
+			error("pthread_create error %m");
+		} else
+			sched_pend_thread = 1;
+		slurm_attr_destroy(&attr_agent);
+		slurm_mutex_unlock(&sched_mutex);
+	} else {
+		/* Nothing to do, agent already pending */
+		slurm_mutex_unlock(&sched_mutex);
+	}
+
+	return job_count;
+}
+
+/* Thread used to possibly start job scheduler later, if nothing else does */
+static void *_sched_agent(void *args)
+{
+	long delta_t;
+	struct timeval now;
+	useconds_t usec;
+	int job_cnt;
+
+	usec = sched_min_interval / 2;
+	usec = MIN(usec, 1000000);
+	usec = MAX(usec, 10000);
+
+	/* Keep waiting until scheduler() can really run */
+	while (!slurmctld_config.shutdown_time) {
+		usleep(usec);
+		if (sched_running)
+			continue;
+		gettimeofday(&now, NULL);
+		delta_t  = (now.tv_sec  - sched_last.tv_sec) * 1000000;
+		delta_t +=  now.tv_usec - sched_last.tv_usec;
+		if (delta_t >= sched_min_interval)
+			break;
+	}
+
+	job_cnt = schedule(1);
+	slurm_mutex_lock(&sched_mutex);
+	sched_pend_thread = 0;
+	slurm_mutex_unlock(&sched_mutex);
+	if (job_cnt) {
+		/* jobs were started, save state */
+		schedule_node_save();		/* Has own locking */
+		schedule_job_save();		/* Has own locking */
+	}
+
+	return NULL;
+}
+
+static int _schedule(uint32_t job_limit)
+{
 	ListIterator job_iterator = NULL, part_iterator = NULL;
 	List job_queue = NULL;
 	int failed_part_cnt = 0, failed_resv_cnt = 0, job_cnt = 0;
-	int error_code, i, j, part_cnt, time_limit;
+	int error_code, i, j, part_cnt, time_limit, pend_time;
 	uint32_t job_depth = 0;
 	job_queue_rec_t *job_queue_rec;
 	struct job_record *job_ptr = NULL;
@@ -844,6 +970,8 @@ extern int schedule(uint32_t job_limit)
 	static bool wiki_sched = false;
 	static bool fifo_sched = false;
 	static int sched_timeout = 0;
+	static int sched_max_job_start = 0;
+	static int bf_min_age_reserve = 0;
 	static int def_job_limit = 100;
 	static int max_jobs_per_part = 0;
 	static int defer_rpc_cnt = 0;
@@ -912,6 +1040,15 @@ extern int schedule(uint32_t job_limit)
 		}
 
 		if (sched_params &&
+		    (tmp_ptr = strstr(sched_params, "bf_min_age_reserve="))) {
+			bf_min_age_reserve = atoi(tmp_ptr + 19);
+			if (bf_min_age_reserve < 0)
+				bf_min_age_reserve = 0;
+		} else {
+			bf_min_age_reserve = 0;
+		}
+
+		if (sched_params &&
 		    (tmp_ptr=strstr(sched_params, "build_queue_timeout=")))
 		/*                                 01234567890123456789 */
 			build_queue_timeout = atoi(tmp_ptr + 20);
@@ -965,7 +1102,7 @@ extern int schedule(uint32_t job_limit)
 		}
 		if (sched_timeout == 0) {
 			sched_timeout = MAX(time_limit, 1);
-			sched_timeout = MIN(sched_timeout, 4);
+			sched_timeout = MIN(sched_timeout, 2);
 		}
 
 		if (sched_params &&
@@ -976,12 +1113,32 @@ extern int schedule(uint32_t job_limit)
 			sched_interval = 60;
 		}
 
+		if (sched_params &&
+		    (tmp_ptr=strstr(sched_params, "sched_min_interval="))) {
+			i = atoi(tmp_ptr + 19);
+			if (i < 0)
+				error("Invalid sched_min_interval: %d", i);
+			else
+				sched_min_interval = i;
+		}
+
+		if (sched_params &&
+		    (tmp_ptr=strstr(sched_params, "sched_max_job_start=")))
+			sched_max_job_start = atoi(tmp_ptr + 20);
+		if (sched_interval < 0) {
+			error("Invalid sched_max_job_start: %d",
+			      sched_max_job_start);
+			sched_max_job_start = 0;
+		}
+
 		xfree(sched_params);
 		sched_update = slurmctld_conf.last_update;
 		info("SchedulerParameters=default_queue_depth=%d,"
-		     "max_rpc_cnt=%d,max_sched_time=%d,partition_job_depth=%d",
+		     "max_rpc_cnt=%d,max_sched_time=%d,partition_job_depth=%d,"
+		     "sched_max_job_start=%d,sched_min_interval=%d",
 		     def_job_limit, defer_rpc_cnt, sched_timeout,
-		     max_jobs_per_part);
+		     max_jobs_per_part, sched_max_job_start,
+		     sched_min_interval);
 	}
 
 	if ((defer_rpc_cnt > 0) &&
@@ -1031,7 +1188,7 @@ extern int schedule(uint32_t job_limit)
 	 * by the node health checker).
 	 * This relies on the above write lock for the node state.
 	 */
-	if (select_g_reconfigure()) {
+	if (select_g_update_block(NULL)) {
 		unlock_slurmctld(job_write_lock);
 		debug4("sched: not scheduling due to ALPS");
 		goto out;
@@ -1138,6 +1295,10 @@ next_part:			part_ptr = (struct part_record *)
 next_task:
 		if ((time(NULL) - sched_start) >= sched_timeout) {
 			debug("sched: loop taking too long, breaking out");
+			break;
+		}
+		if (sched_max_job_start && (job_cnt >= sched_max_job_start)) {
+			debug("sched: sched_max_job_start reached, breaking out");
 			break;
 		}
 
@@ -1262,10 +1423,11 @@ next_task:
 		if (job_ptr->qos_id) {
 			slurmdb_assoc_rec_t *assoc_ptr;
 			assoc_ptr = (slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
-			if (assoc_ptr &&
-			    !bit_test(assoc_ptr->usage->valid_qos,
-				      job_ptr->qos_id) &&
-			    !job_ptr->limit_set_qos) {
+			if (assoc_ptr
+			    && (accounting_enforce & ACCOUNTING_ENFORCE_QOS)
+			    && !bit_test(assoc_ptr->usage->valid_qos,
+					 job_ptr->qos_id)
+			    && !job_ptr->limit_set_qos) {
 				debug("sched: JobId=%u has invalid QOS",
 				      job_ptr->job_id);
 				xfree(job_ptr->state_desc);
@@ -1384,6 +1546,20 @@ next_task:
 				}
 			}
 
+			if (fail_by_part && bf_min_age_reserve) {
+				/* Consider other jobs in this partition if
+				 * job has been waiting for less than
+				 * bf_min_age_reserve time */
+				if (job_ptr->details->begin_time == 0) {
+					fail_by_part = false;
+				} else {
+					pend_time = difftime(now,
+						job_ptr->details->begin_time);
+					if (pend_time < bf_min_age_reserve)
+						fail_by_part = false;
+				}
+			}
+
 			if (fail_by_part) {
 		 		/* do not schedule more jobs in this partition
 				 * or on nodes in this partition */
@@ -1473,7 +1649,7 @@ next_task:
 			   (error_code != ESLURM_INVALID_BURST_BUFFER_REQUEST)&&
 			   (error_code != ESLURM_ACCOUNTING_POLICY)) {
 			info("sched: schedule: %s non-runnable:%s",
-			     jobid2str(job_ptr, job_id_str),
+			     jobid2str(job_ptr, job_id_str, sizeof(job_id_str)),
 			     slurm_strerror(error_code));
 			if (!wiki_sched) {
 				last_job_update = now;
@@ -1626,7 +1802,11 @@ extern batch_job_launch_msg_t *build_launch_job_msg(struct job_record *job_ptr,
 		return NULL;
 	}
 
-	if (getpwuid_r(launch_msg_ptr->uid, &pwd, buffer, PW_BUF_SIZE, &result)
+	if (slurm_getpwuid_r(launch_msg_ptr->uid,
+			     &pwd,
+			     buffer,
+			     PW_BUF_SIZE,
+			     &result)
 	    || !result) {
 #ifdef HAVE_NATIVE_CRAY
 		/* On a Cray this needs to happen before the launch of
@@ -1667,7 +1847,10 @@ extern batch_job_launch_msg_t *build_launch_job_msg(struct job_record *job_ptr,
 	}
 
 	launch_msg_ptr->acctg_freq = xstrdup(job_ptr->details->acctg_freq);
-	launch_msg_ptr->partition = xstrdup(job_ptr->partition);
+	if (job_ptr->part_ptr)
+		launch_msg_ptr->partition = xstrdup(job_ptr->part_ptr->name);
+	else
+		launch_msg_ptr->partition = xstrdup(job_ptr->partition);
 	launch_msg_ptr->std_err = xstrdup(job_ptr->details->std_err);
 	launch_msg_ptr->std_in = xstrdup(job_ptr->details->std_in);
 	launch_msg_ptr->std_out = xstrdup(job_ptr->details->std_out);
@@ -1786,6 +1969,7 @@ extern int make_batch_job_cred(batch_job_launch_msg_t *launch_msg_ptr,
 	cred_arg.stepid    = launch_msg_ptr->step_id;
 	cred_arg.uid       = launch_msg_ptr->uid;
 
+	cred_arg.job_constraints     = job_ptr->details->features;
 	cred_arg.job_hostlist        = job_resrcs_ptr->nodes;
 	cred_arg.job_core_bitmap     = job_resrcs_ptr->core_bitmap;
 	cred_arg.job_core_spec       = job_ptr->details->core_spec;
@@ -2793,7 +2977,13 @@ static char **_build_env(struct job_record *job_ptr)
 	setenvf(&my_env, "SLURM_JOB_ID", "%u", job_ptr->job_id);
 	setenvf(&my_env, "SLURM_JOB_NAME", "%s", job_ptr->name);
 	setenvf(&my_env, "SLURM_JOB_NODELIST", "%s", job_ptr->nodes);
-	setenvf(&my_env, "SLURM_JOB_PARTITION", "%s", job_ptr->partition);
+	if (job_ptr->part_ptr) {
+		setenvf(&my_env, "SLURM_JOB_PARTITION", "%s",
+			job_ptr->part_ptr->name);
+	} else {
+		setenvf(&my_env, "SLURM_JOB_PARTITION", "%s",
+			job_ptr->partition);
+	}
 	setenvf(&my_env, "SLURM_JOB_UID", "%u", job_ptr->user_id);
 	name = uid_to_string((uid_t) job_ptr->user_id);
 	setenvf(&my_env, "SLURM_JOB_USER", "%s", name);
@@ -2812,6 +3002,7 @@ static void *_run_epilog(void *arg)
 	pid_t cpid;
 	int i, status, wait_rc;
 	char *argv[2];
+	uint16_t tm;
 
 	argv[0] = epilog_arg->epilog_slurmctld;
 	argv[1] = NULL;
@@ -2832,15 +3023,17 @@ static void *_run_epilog(void *arg)
 		exit(127);
 	}
 
+	/* Prolog and epilog use the same timeout
+	 */
+	tm = slurm_get_prolog_timeout();
 	while (1) {
-		wait_rc = waitpid(cpid, &status, 0);
+		wait_rc = waitpid_timeout(__func__, cpid, &status, tm);
 		if (wait_rc < 0) {
 			if (errno == EINTR)
 				continue;
-			error("epilog_slurmctld waitpid error: %m");
+			error("%s: waitpid error: %m", __func__);
 			break;
 		} else if (wait_rc > 0) {
-			killpg(cpid, SIGKILL);	/* kill children too */
 			break;
 		}
 	}
@@ -3054,6 +3247,7 @@ static void *_run_prolog(void *arg)
 	bitstr_t *node_bitmap = NULL;
 	time_t now = time(NULL);
 	uint16_t resume_timeout = slurm_get_resume_timeout();
+	uint16_t tm;
 
 	lock_slurmctld(config_read_lock);
 	argv[0] = xstrdup(slurmctld_conf.prolog_slurmctld);
@@ -3088,15 +3282,15 @@ static void *_run_prolog(void *arg)
 		exit(127);
 	}
 
+	tm = slurm_get_prolog_timeout();
 	while (1) {
-		wait_rc = waitpid(cpid, &status, 0);
+		wait_rc = waitpid_timeout(__func__, cpid, &status, tm);
 		if (wait_rc < 0) {
 			if (errno == EINTR)
 				continue;
-			error("prolog_slurmctld waitpid error: %m");
+			error("%s: waitpid error: %m", __func__);
 			break;
 		} else if (wait_rc > 0) {
-			killpg(cpid, SIGKILL);	/* kill children too */
 			break;
 		}
 	}
@@ -3437,4 +3631,47 @@ cleanup_completing(struct job_record *job_ptr)
 	job_hold_requeue(job_ptr);
 
 	slurm_sched_g_schedule();
+}
+
+/*
+ * _waitpid_timeout()
+ *
+ *  Same as waitpid(2) but kill process group for pid after timeout secs.
+ */
+int
+waitpid_timeout(const char *name, pid_t pid, int *pstatus, int timeout)
+{
+	int timeout_ms = 1000 * timeout; /* timeout in ms                   */
+	int max_delay =  1000;           /* max delay between waitpid calls */
+	int delay = 10;                  /* initial delay                   */
+	int rc;
+	int options = WNOHANG;
+
+	if (timeout <= 0 || timeout == (uint16_t)NO_VAL)
+		options = 0;
+
+	while ((rc = waitpid (pid, pstatus, options)) <= 0) {
+		if (rc < 0) {
+			if (errno == EINTR)
+				continue;
+			error("waidpid: %m");
+			return -1;
+		}
+		else if (timeout_ms <= 0) {
+			info("%s%stimeout after %ds: killing pgid %d",
+			     name != NULL ? name : "",
+			     name != NULL ? ": " : "",
+			     timeout, pid);
+			killpg(pid, SIGKILL);
+			options = 0;
+		}
+		else {
+			poll(NULL, 0, delay);
+			timeout_ms -= delay;
+			delay = MIN (timeout_ms, MIN(max_delay, delay*2));
+		}
+	}
+
+	killpg(pid, SIGKILL);  /* kill children too */
+	return pid;
 }

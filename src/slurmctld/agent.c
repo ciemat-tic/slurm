@@ -4,6 +4,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
+ *  Portions Copyright (C) 2010-2015 SchedMD LLC <http://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>, et. al.
  *  Derived from pdsh written by Jim Garlick <garlick1@llnl.gov>
@@ -53,7 +54,7 @@
  *  The main agent thread creates a separate thread for each node to be
  *  communicated with up to AGENT_THREAD_COUNT. A special watchdog thread
  *  sends SIGLARM to any threads that have been active (in DSH_ACTIVE state)
- *  for more than COMMAND_TIMEOUT seconds.
+ *  for more than MessageTimeout seconds.
  *  The agent responds to slurmctld via a function call or an RPC as required.
  *  For example, informing slurmctld that some node is not responding.
  *
@@ -202,6 +203,7 @@ static List mail_list = NULL;		/* pending e-mail requests */
 static pthread_mutex_t agent_cnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  agent_cnt_cond  = PTHREAD_COND_INITIALIZER;
 static int agent_cnt = 0;
+static uint16_t message_timeout = (uint16_t) NO_VAL;
 
 static bool run_scheduler    = false;
 static bool wiki2_sched      = false;
@@ -443,7 +445,7 @@ static agent_info_t *_make_agent_info(agent_arg_t *agent_arg_ptr)
 				agent_arg_ptr->node_count);
 	}
 	i = 0;
-	while(i < agent_info_ptr->thread_count) {
+	while (i < agent_info_ptr->thread_count) {
 		thread_ptr[thr_count].state      = DSH_NEW;
 		thread_ptr[thr_count].addr = agent_arg_ptr->addr;
 		name = hostlist_shift(agent_arg_ptr->hostlist);
@@ -512,7 +514,7 @@ static void _update_wdog_state(thd_t *thread_ptr,
 			if (pthread_kill(thread_ptr->thread, SIGUSR1) == ESRCH)
 				*state = DSH_NO_RESP;
 			else
-				thread_ptr->end_time += COMMAND_TIMEOUT;
+				thread_ptr->end_time += message_timeout;
 		}
 		break;
 	case DSH_NEW:
@@ -849,7 +851,7 @@ static void *_thread_per_group_rpc(void *args)
 
 	slurm_mutex_lock(thread_mutex_ptr);
 	thread_ptr->state = DSH_ACTIVE;
-	thread_ptr->end_time = thread_ptr->start_time + COMMAND_TIMEOUT;
+	thread_ptr->end_time = thread_ptr->start_time + message_timeout;
 	slurm_mutex_unlock(thread_mutex_ptr);
 
 	/* send request message */
@@ -1176,7 +1178,7 @@ static void _list_delete_retry(void *retry_entry)
  * agent_retry - Agent for retrying pending RPCs. One pending request is
  *	issued if it has been pending for at least min_wait seconds
  * IN min_wait - Minimum wait time between re-issue of a pending RPC
- * IN mai_too - Send pending email too, note this performed using a
+ * IN mail_too - Send pending email too, note this performed using a
  *	fork/waitpid, so it can take longer than just creating  a pthread
  *	to send RPCs
  * RET count of queued requests remaining
@@ -1308,6 +1310,10 @@ extern int agent_retry (int min_wait, bool mail_too)
 void agent_queue_request(agent_arg_t *agent_arg_ptr)
 {
 	queued_request_t *queued_req_ptr = NULL;
+
+	if (message_timeout == (uint16_t) NO_VAL) {
+		message_timeout = MAX(slurm_get_msg_timeout(), 30);
+	}
 
 	if (agent_arg_ptr->msg_type == REQUEST_SHUTDOWN) {
 		/* execute now */
@@ -1513,6 +1519,8 @@ static char *_mail_type_str(uint16_t mail_type)
 		return "Failed";
 	if (mail_type == MAIL_JOB_REQUEUE)
 		return "Requeued";
+	if (mail_type == MAIL_JOB_STAGE_OUT)
+		return "Staged Out";
 	if (mail_type == MAIL_JOB_TIME100)
 		return "Reached time limit";
 	if (mail_type == MAIL_JOB_TIME90)
@@ -1562,6 +1570,14 @@ static void _set_job_time(struct job_record *job_ptr, uint16_t mail_type,
 			interval = time(NULL) - job_ptr->start_time;
 		snprintf(buf, buf_len, ", Run time ");
 		secs2time_str(interval, buf+11, buf_len-11);
+		return;
+	}
+
+	if ((mail_type == MAIL_JOB_STAGE_OUT) && job_ptr->end_time) {
+		interval = time(NULL) - job_ptr->end_time;
+		snprintf(buf, buf_len, ", StageOut time ");
+		secs2time_str(interval, buf+16, buf_len-16);
+		return;
 	}
 }
 

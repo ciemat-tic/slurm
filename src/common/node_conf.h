@@ -171,6 +171,9 @@ struct node_record {
 	uint16_t protocol_version;	/* Slurm version number */
 	char *version;			/* Slurm version */
 	bitstr_t *node_spec_bitmap;	/* node cpu specialization bitmap */
+	uint32_t owner;			/* User allowed to use node or NO_VAL */
+	uint16_t owner_job_cnt;		/* Count of exclusive jobs by "owner" */
+	char *tres_str;                 /* tres this node has */
 };
 extern struct node_record *node_record_table_ptr;  /* ptr to node records */
 extern int node_record_count;		/* count in node_record_table_ptr */
@@ -254,11 +257,28 @@ extern struct node_record *create_node_record (
 
 /*
  * find_node_record - find a record for node with specified name
- * input: name - name of the desired node
- * output: return pointer to node record or NULL if not found
- *         node_hash_table - table of hash indexes
+ * IN: name - name of the desired node
+ * RET: pointer to node record or NULL if not found
+ * NOTE: Logs an error if the node name is NOT found
  */
 extern struct node_record *find_node_record (char *name);
+
+/*
+ * find_node_record2 - find a record for node with specified name
+ * IN: name - name of the desired node
+ * RET: pointer to node record or NULL if not found
+ * NOTE: Does not log an error if the node name is NOT found
+ */
+extern struct node_record *find_node_record2 (char *name);
+
+/*
+ * find_node_record_no_alias - find a record for node with specified name
+ * without looking at the node's alias (NodeHostName).
+ * IN: name - name of the desired node
+ * RET: pointer to node record or NULL if not found
+ * NOTE: Does not log an error if the node name is NOT found
+ */
+extern struct node_record *find_node_record_no_alias (char *name);
 
 /*
  * hostlist2bitmap - given a hostlist, build a bitmap representation

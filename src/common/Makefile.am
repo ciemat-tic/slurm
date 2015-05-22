@@ -39,6 +39,7 @@ libcommon_la_SOURCES = 			\
 	xsignal.c xsignal.h		\
 	strnatcmp.c strnatcmp.h		\
 	forward.c forward.h     	\
+	msg_aggr.c msg_aggr.h     	\
 	strlcpy.c strlcpy.h		\
 	list.c list.h 			\
 	xtree.c xtree.h			\
@@ -96,7 +97,8 @@ libcommon_la_SOURCES = 			\
 	slurm_acct_gather_infiniband.c slurm_acct_gather_infiniband.h \
 	slurm_acct_gather_filesystem.c slurm_acct_gather_filesystem.h \
 	slurm_jobcomp.c slurm_jobcomp.h	\
-	slurm_route.c slurm_route.h \
+	slurm_route.c slurm_route.h	\
+	slurm_time.c slurm_time.h	\
 	slurm_topology.c slurm_topology.h \
 	switch.c switch.h		\
 	arg_desc.c arg_desc.h		\
@@ -127,7 +129,9 @@ libcommon_la_SOURCES = 			\
 	entity.h entity.c		\
 	layout.h layout.c		\
 	layouts_mgr.h layouts_mgr.c	\
-	mapping.c mapping.h
+	mapping.c mapping.h		\
+	xcgroup_read_config.c xcgroup_read_config.h \
+	callerid.c callerid.h
 
 EXTRA_libcommon_la_SOURCES = 		\
 	$(extra_unsetenv_src)		\

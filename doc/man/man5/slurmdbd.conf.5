@@ -1,4 +1,5 @@
-.TH "slurmdbd.conf" "21" "July 2014" "slurmdbd.conf 14.11" "Slurm configuration file"
+.TH "slurmdbd.conf" "5" "Slurm Configuration File" "April 2015" "Slurm Configuration File"
+
 .SH "NAME"
 slurmdbd.conf \- Slurm Database Daemon (SlurmDBD) configuration file
 
@@ -54,7 +55,7 @@ reservation data, no otherwise.  Default is no.
 This script can be executed every time a rollup happens (every hour,
 day and month), depending on the Purge*After options.  This script is used
 to transfer accounting records out of the database into an archive.  It is
-used in place of the internal process used to acrhive objects.
+used in place of the internal process used to archive objects.
 The script is executed with a no arguments, The following environment
 variables are set.
 .RS
@@ -171,6 +172,9 @@ and could impact performance.
 Valid subsystems available today (with more to come) include:
 .RS
 .TP 17
+\fBDB_ARCHIVE\fR
+SQL statements/queries when dealing with archiving and purging the database.
+.TP
 \fBDB_ASSOC\fR
 SQL statements/queries when dealing with associations in the database.
 .TP
@@ -207,7 +211,7 @@ SQL statements/queries when dealing with wckeys in the database.
 .TP
 \fBDebugLevel\fR
 The level of detail to provide the Slurm Database Daemon's logs.
-The default valus is \fBinfo\fR.
+The default value is \fBinfo\fR.
 .RS
 .TP 10
 \fBquiet\fR
@@ -327,9 +331,12 @@ but can only see themselves when listing users.
 Events happening on the cluster over this age are purged from the database.
 This includes node down times and such.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then job step records are never purged.
 
 .TP
@@ -337,9 +344,12 @@ If not set (default), then job step records are never purged.
 Individual job records over this age are purged from the database.
 Aggregated information will be preserved indefinitely.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then job records are never purged.
 
 .TP
@@ -347,9 +357,12 @@ If not set (default), then job records are never purged.
 Individual reservation records over this age are purged from the database.
 Aggregated information will be preserved indefinitely.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then reservation records are never purged.
 
 .TP
@@ -357,9 +370,12 @@ If not set (default), then reservation records are never purged.
 Individual job step records over this age are purged from the database.
 Aggregated information will be preserved indefinitely.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then job step records are never purged.
 
 .TP
@@ -368,9 +384,12 @@ Records of individual suspend times for jobs over this age are purged from the
 database.
 Aggregated information will be preserved indefinitely.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then job step records are never purged.
 
 .TP

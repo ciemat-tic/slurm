@@ -92,9 +92,12 @@ _valid_uid_gid(uid_t uid, gid_t *gid, char **user_name)
 	if (*user_name)
 		return 1;
 #endif
-
+znovu:
+	errno = 0;
 	pwd = getpwuid(uid);
 	if (!pwd) {
+		if (errno == EINTR)
+			goto znovu;
 		error("uid %ld not found on system", (long) uid);
 		slurm_seterrno(ESLURMD_UID_NOT_FOUND);
 		return 0;
@@ -375,13 +378,19 @@ stepd_step_rec_create(launch_tasks_request_msg_t *msg, uint16_t protocol_version
 	job->envtp->mem_bind_type = 0;
 	job->envtp->mem_bind = NULL;
 	job->envtp->ckpt_dir = NULL;
-	job->envtp->comm_port = msg->resp_port[nodeid % msg->num_resp_port];
-
-	memcpy(&resp_addr, &msg->orig_addr, sizeof(slurm_addr_t));
-	slurm_set_addr(&resp_addr,
-		       msg->resp_port[nodeid % msg->num_resp_port],
-		       NULL);
+	if (!msg->resp_port)
+		msg->num_resp_port = 0;
+	if (msg->num_resp_port) {
+		job->envtp->comm_port =
+			msg->resp_port[nodeid % msg->num_resp_port];
+		memcpy(&resp_addr, &msg->orig_addr, sizeof(slurm_addr_t));
+		slurm_set_addr(&resp_addr,
+			       msg->resp_port[nodeid % msg->num_resp_port],
+			       NULL);
+	}
 	job->user_managed_io = msg->user_managed_io;
+	if (!msg->io_port)
+		msg->user_managed_io = 1;
 	if (!msg->user_managed_io) {
 		memcpy(&io_addr,   &msg->orig_addr, sizeof(slurm_addr_t));
 		slurm_set_addr(&io_addr,

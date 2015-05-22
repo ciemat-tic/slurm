@@ -81,7 +81,7 @@ static stepd_step_rec_t *_step_setup(slurm_addr_t *cli, slurm_addr_t *self,
 #ifdef MEMORY_LEAK_DEBUG
 static void _step_cleanup(stepd_step_rec_t *job, slurm_msg_t *msg, int rc);
 #endif
-static int process_cmdline (int argc, char *argv[]);
+static int _process_cmdline (int argc, char *argv[]);
 
 int slurmstepd_blocked_signals[] = {
 	SIGPIPE, 0
@@ -102,7 +102,7 @@ main (int argc, char *argv[])
 	gid_t *gids;
 	int rc = 0;
 
-	if (process_cmdline (argc, argv) < 0)
+	if (_process_cmdline (argc, argv) < 0)
 		fatal ("Error in slurmstepd command line");
 
 	xsignal_block(slurmstepd_blocked_signals);
@@ -172,14 +172,14 @@ ending:
 
 	xfree(cli);
 	xfree(self);
-	xfree(conf->hostname);
 	xfree(conf->block_map);
 	xfree(conf->block_map_inv);
-	xfree(conf->spooldir);
+	xfree(conf->hostname);
+	xfree(conf->logfile);
 	xfree(conf->node_name);
 	xfree(conf->node_topo_addr);
 	xfree(conf->node_topo_pattern);
-	xfree(conf->logfile);
+	xfree(conf->spooldir);
 	xfree(conf);
 #endif
 	info("done with job");
@@ -318,7 +318,7 @@ static int _handle_spank_mode (int argc, char *argv[])
 /*
  *  Process special "modes" of slurmstepd passed as cmdline arguments.
  */
-static int process_cmdline (int argc, char *argv[])
+static int _process_cmdline (int argc, char *argv[])
 {
 	if ((argc == 2) && (strcmp(argv[1], "getenv") == 0)) {
 		print_rlimits();
@@ -466,7 +466,7 @@ _init_from_slurmd(int sock, char **argv,
 	slurm_msg_t_init(msg);
 	msg->protocol_version = (uint16_t)proto;
 
-	switch(step_type) {
+	switch (step_type) {
 	case LAUNCH_BATCH_JOB:
 		msg->msg_type = REQUEST_BATCH_JOB_LAUNCH;
 		break;
@@ -474,7 +474,7 @@ _init_from_slurmd(int sock, char **argv,
 		msg->msg_type = REQUEST_LAUNCH_TASKS;
 		break;
 	default:
-		fatal("Unrecognized launch RPC");
+		fatal("%s: Unrecognized launch RPC (%d)", __func__, step_type);
 		break;
 	}
 	if (unpack_msg(msg, buffer) == SLURM_ERROR)

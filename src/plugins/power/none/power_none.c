@@ -72,15 +72,12 @@
  * load a burst_buffer plugin if the plugin_type string has a prefix of
  * "burst_buffer/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "power none plugin";
 const char plugin_type[]        = "power/none";
-const uint32_t plugin_version   = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -88,13 +85,36 @@ const uint32_t plugin_version   = 100;
  */
 extern int init(void)
 {
+	debug("%s: %s", plugin_name, __func__);
 	return SLURM_SUCCESS;
 }
 
 /*
  * fini() is called when the plugin is unloaded. Free all memory.
  */
-extern int fini(void)
+extern void fini(void)
 {
-	return SLURM_SUCCESS;
+	debug("%s: %s", plugin_name, __func__);
+	return;
+}
+
+/* Read the configuration file */
+extern void power_p_reconfig(void)
+{
+	debug("%s: %s", plugin_name, __func__);
+	return;
+}
+
+/* Note that a suspended job has been resumed */
+extern void power_p_job_resume(struct job_record *job_ptr)
+{
+	debug("%s: %s", plugin_name, __func__);
+	return;
+}
+
+/* Note that a job has been allocated resources and is ready to start */
+extern void power_p_job_start(struct job_record *job_ptr)
+{
+	debug("%s: %s", plugin_name, __func__);
+	return;
 }

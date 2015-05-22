@@ -1,8 +1,12 @@
 RELEASE NOTES FOR SLURM VERSION 15.08
-10 December 2014
+12 May 2015
 
 
-IMPORTANT NOTE:
+IMPORTANT NOTES:
+ANY JOBS WITH A JOB ID ABOVE 2,147,463,647 WILL BE PURGED WHEN SLURM IS
+UPGRADED FROM AN OLDER VERSION! Reduce your configured MaxJobID value as needed
+prior to upgrading in order to eliminate these jobs.
+
 If using the slurmdbd (Slurm DataBase Daemon) you must update this first.
 The 15.08 slurmdbd will work with Slurm daemons of version 14.03 and above.
 You will not need to update all clusters at the same time, but it is very
@@ -22,11 +26,17 @@ Slurm can be upgraded from version 14.03 or 14.11 to version 15.08 without loss
 of jobs or other state information. Upgrading directly from an earlier version
 of Slurm will result in loss of state information.
 
-If using SPANK plugins, they should be recompiled against this version.
+If using SPANK plugins that use the Slurm APIs, they should be recompiled when
+upgrading Slurm to a new major release.
 
 
 HIGHLIGHTS
 ==========
+ -- In order to support inter-cluster job dependencies, the MaxJobID
+    configuration parameter default value has been reduced from 4,294,901,760
+    to 2,147,418,112 and it's maximum value is now 2,147,463,647.
+    ANY JOBS WITH A JOB ID ABOVE 2,147,463,647 WILL BE PURGED WHEN SLURM IS
+    UPGRADED FROM AN OLDER VERSION!
  -- Add burst buffer support infrastructure. Currently available plugin include
     burst_buffer/generic (uses administrator supplied programs to manage file
     staging) and burst_buffer/cray (uses Cray APIs to manage files).
@@ -41,7 +51,7 @@ HIGHLIGHTS
     without preemption. NOTE: That with PreemptType=qos, the partition's
     Shared=FORCE:# configuration option will permit one job more per resource
     to be run than than specified, but only if started by preemption.
- -- A partition can now have a QOS attached.  This will allow a partition
+ -- A partition can now have an associated QOS.  This will allow a partition
     to have all the limits a QOS has.  If a limit is set in both QOS
     the partition QOS will override the job's QOS unless the job's QOS has the
     'PartitionQOS' flag set.
@@ -52,6 +62,30 @@ HIGHLIGHTS
     NOTE: Only supported with select/linear plugin.
     NOTE: The program contribs/sgi/netloc_to_topology can be used to build
     Slurm's topology.conf file.
+ -- Add the ability for a compute node to be allocated to multiple jobs, but
+    restricted to a single user. Added "--exclusive=user" option to salloc,
+    the scontrol and sview commands. Added new partition configuration parameter
+    "ExclusiveUser=yes|no".
+ -- Verify that all plugin version numbers are identical to the component
+    attempting to load them. Without this verification, the plugin can reference
+    Slurm functions in the caller which differ (e.g. the underlying function's
+    arguments could have changed between Slurm versions).
+    NOTE: All plugins (except SPANK) must be built against the identical
+    version of Slurm in order to be used by any Slurm command or daemon. This
+    should eliminate some very difficult to diagnose problems due to use of old
+    plugins.
+ -- Optimize resource allocation for systems with dragonfly networks.
+ -- Added plugin to record job completion information using Elasticsearch.
+    Libcurl is required for build. Configure slurm.conf as follows
+    JobCompType=jobcomp/elasticsearch
+    JobCompLoc=http://YOUR_ELASTICSEARCH_SERVER:9200
+ -- Added TRES (Trackable resources) to track Mem, GRES, license, etc.
+    utilization in the accounting database.
+ -- DATABASE SCHEME HAS CHANGED.  WHEN UPDATING THE MIGRATION PROCESS MAY TAKE
+    SOME AMOUNT OF TIME DEPENDING ON HOW LARGE YOUR DATABASE IS.  WHILE UPDATING
+    NO RECORDS WILL BE LOST, BUT THE SLURMDBD MAY NOT BE RESPONSIVE DURING THE
+    UPDATE. IT WILL ALSO NOT BE POSSIBLE TO AUTOMATICALLY REVERT THE DATABASE
+    TO THE FORMAT FOR AN EARLIER VERSION OF SLURM. PLAN ACCORDINGLY.
 
 RPMBUILD CHANGES
 ================
@@ -74,12 +108,24 @@ CONFIGURATION FILE CHANGES (see man appropriate man page for details)
     between the user application and srun when the user application terminates.
  -- Remove the CR_ALLOCATE_FULL_SOCKET configuration option.  It is now the
     default.
- -- Added DebugFlags values of "CpuFrequency" and "Power".
+ -- Added DebugFlags values of "CpuFrequency", "Power" and "SICP".
  -- Added CpuFreqGovernors which lists governors allowed to be set with
     --cpu-freq on salloc, sbatch, and srun.
  -- Interpret a partition configuration of "Nodes=ALL" in slurm.conf as
     including all nodes defined in the cluster.
  -- Added new configuration parameters PowerParameters and PowerPlugin.
+ -- Add AuthInfo option of "cred_expire=#" to specify the lifetime of a job
+    step credential. The default value was changed from 1200 to 120 seconds.
+    This value also controls how long a requeued job must wait before it can
+    be started again.
+ -- Added LaunchParameters configuration parameter.
+ -- Added new partition configuration parameter "ExclusiveUser=yes|no".
+ -- Add TopologyParam configuration parameter. Optional value of "dragonfly"
+    is supported.
+ -- Added a slurm.conf parameter "PrologEpilogTimeout" to control how long
+    prolog/epilog can run.
+ -- Add PrologFlags option of "Contain" to create a proctrack container at
+    job resource allocation time.
 
 DBD CONFIGURATION FILE CHANGES (see "man slurmdbd.conf" for details)
 ====================================================================
@@ -102,10 +148,33 @@ COMMAND CHANGES (see man pages for details)
  -- For advanced reservation, replace flag "License_only" with flag "Any_Nodes".
     It can be used to indicate the an advanced reservation resources (licenses
     and/or burst buffers) can be used with any compute nodes.
+ -- Add "--sicp" (available for inter-cluster dependencies) and "--power"
+    (specify power management options) to salloc, sbatch and srun commands.
+ -- Added "--mail=stage_out" option to job submission commands to notify user
+    when burst buffer state out is complete.
+ -- Require a "Reason" when using scontrol to set a node state to DOWN.
+ -- Mail notifications on job BEGIN, END and FAIL now apply to a job array as a
+    whole rather than generating individual email messages for each task in the
+    job array.
+ -- Remove srun --max-launch-time option. The option has not been functional
+    or documented since Slurm version 2.0.
+ -- Add "--thread-spec" option to salloc, sbatch and srun commands. This is
+    the count of threads reserved for system use per node.
+ -- Introduce new sbatch option '--kill-on-invalid-dep=yes|no' which allows
+    users to specify which behavior they want if a job dependency is not
+    satisfied.
+ -- Add scontrol options to view and modify layouts tables.
 
 OTHER CHANGES
 =============
-
+ -- SPANK naming changes: For environment variables set using the
+    spank_job_control_setenv() function, the values were available in the
+    slurm_spank_job_prolog() and slurm_spank_job_epilog() functions using
+    getenv where the name was given a prefix of "SPANK_". That prefix has
+    been removed for consistency with the environment variables available in
+    the Prolog and Epilog scripts.
+ -- job_submit/lua: Enable reading and writing job environment variables.
+    For example: if (job_desc.environment.LANGUAGE == "en_US") then ...
 
 API CHANGES
 ===========
@@ -128,22 +197,26 @@ Changed members of the following structs
 
 Added the following struct definitions
 ======================================
- -- Added the following fields to struct struct job_descriptor
+ -- Added the following fields to struct slurm_ctl_conf:
+    launch_params.
+ -- Added the following fields to struct job_descriptor:
+    clusters, cpu_freq_min, cpu_freq_gov, power_flags, sicp_mode.
+ -- Added the following fields to struct job_info:
+    cpu_freq_min, cpu_freq_gov, power_flags, sicp_mode.
+ -- Added the following fields to struct slurm_step_ctx_params_t:
     cpu_freq_min, cpu_freq_gov.
- -- Added the following fields to struct job_info
+ -- Added the following fields to struct slurm_step_launch_params_t:
     cpu_freq_min, cpu_freq_gov.
- -- Added the following fields to struct slurm_step_ctx_params_t
+ -- Added the following fields to struct job_step_info_t:
     cpu_freq_min, cpu_freq_gov.
- -- Added the following fields to struct slurm_step_launch_params_t
-    cpu_freq_min, cpu_freq_gov.
- -- Added the following fields to struct job_step_info_t
-    cpu_freq_min, cpu_freq_gov.
- -- Added the following fields to struct resource_allocation_response_msg_t
+ -- Added the following fields to struct resource_allocation_response_msg_t:
     cpu_freq_min, cpu_freq_gov.
  -- Added the following fields to struct reserve_info_t:
     burst_buffer.
  -- Added the following fields to struct resv_desc_msg_t:
     burst_buffer.
+ -- Added the following fields to struct node_info_t:
+    owner.
 
 Added the following struct definitions
 ======================================
@@ -152,11 +225,12 @@ Added the following struct definitions
 
 Changed the following enums and #defines
 ========================================
-
+ -- Added MAIL_JOB_STAGE_OUT
 
 Added the following API's
 =========================
-
+ -- Added APIs to load, print, and update layouts:
+    slurm_print_layout_info, slurm_load_layout, slurm_update_layout.
 
 Changed the following API's
 ============================

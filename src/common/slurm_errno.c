@@ -219,9 +219,9 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_SAME_PARENT_ACCOUNT,
 	  "Account already child of parent account specified"   },
 	{ ESLURM_INVALID_QOS,
-	  "Job has invalid qos"					},
+	  "Invalid qos specification"				},
 	{ ESLURM_INVALID_WCKEY,
-	  "Job has invalid wckey"				},
+	  "Invalid wckey specification"				},
 	{ ESLURM_INVALID_LICENSES,
 	  "Invalid license specification"			},
 	{ ESLURM_NEED_RESTART,
@@ -315,6 +315,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Burst Buffer resource limit exceeded"		},
 	{ ESLURM_INVALID_BURST_BUFFER_REQUEST,
 	  "Burst Buffer request invalid"			},
+	{ ESLURM_PRIO_RESET_FAIL,
+	  "Changes to job priority are not persistent, change nice instead" },
 
 	/* slurmd error codes */
 	{ ESLRUMD_PIPE_ERROR_ON_TASK_SPAWN,

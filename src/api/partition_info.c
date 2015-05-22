@@ -188,6 +188,14 @@ char *slurm_sprint_partition_info ( partition_info_t * part_ptr,
 	else
 		sprintf(tmp_line, " Default=NO");
 	xstrcat(out, tmp_line);
+
+	if (part_ptr->qos_char)
+		snprintf(tmp_line, sizeof(tmp_line), " QoS=%s",
+			 part_ptr->qos_char);
+	else
+		sprintf(tmp_line, " QoS=N/A");
+	xstrcat(out, tmp_line);
+
 	if (one_liner)
 		xstrcat(out, " ");
 	else
@@ -223,6 +231,11 @@ char *slurm_sprint_partition_info ( partition_info_t * part_ptr,
 		sprintf(tmp_line, " DisableRootJobs=YES");
 	else
 		sprintf(tmp_line, " DisableRootJobs=NO");
+	xstrcat(out, tmp_line);
+	if (part_ptr->flags & PART_FLAG_EXCLUSIVE_USER)
+		sprintf(tmp_line, " ExclusiveUser=YES");
+	else
+		sprintf(tmp_line, " ExclusiveUser=NO");
 	xstrcat(out, tmp_line);
 	sprintf(tmp_line, " GraceTime=%u", part_ptr->grace_time);
 	xstrcat(out, tmp_line);

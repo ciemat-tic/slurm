@@ -83,7 +83,6 @@ struct part_record *default_part_loc = NULL; /* default partition location */
 time_t last_part_update;	/* time of last update to partition records */
 uint16_t part_max_priority = 0;         /* max priority in all partitions */
 
-static int    _build_part_bitmap(struct part_record *part_ptr);
 static int    _delete_part_record(char *name);
 static void   _dump_part_state(struct part_record *part_ptr,
 			       Buf buffer);
@@ -94,9 +93,11 @@ static int    _open_part_state_file(char **state_file);
 static int    _uid_list_size(uid_t * uid_list_ptr);
 static void   _unlink_free_nodes(bitstr_t *old_bitmap,
 			struct part_record *part_ptr);
+static uid_t *_remove_duplicate_uids(uid_t *);
+static int _uid_cmp(const void *, const void *);
 
 /*
- * _build_part_bitmap - update the total_cpus, total_nodes, and node_bitmap
+ * build_part_bitmap - update the total_cpus, total_nodes, and node_bitmap
  *	for the specified partition, also reset the partition pointers in
  *	the node back to this partition.
  * IN part_ptr - pointer to the partition
@@ -105,7 +106,7 @@ static void   _unlink_free_nodes(bitstr_t *old_bitmap,
  * NOTE: this does not report nodes defined in more than one partition. this
  *	is checked only upon reading the configuration file, not on an update
  */
-static int _build_part_bitmap(struct part_record *part_ptr)
+extern int build_part_bitmap(struct part_record *part_ptr)
 {
 	char *this_node_name;
 	bitstr_t *old_bitmap;
@@ -114,6 +115,8 @@ static int _build_part_bitmap(struct part_record *part_ptr)
 
 	part_ptr->total_cpus = 0;
 	part_ptr->total_nodes = 0;
+	part_ptr->max_cpu_cnt = 0;
+	part_ptr->max_core_cnt = 0;
 
 	if (part_ptr->node_bitmap == NULL) {
 		part_ptr->node_bitmap = bit_alloc(node_record_count);
@@ -130,6 +133,12 @@ static int _build_part_bitmap(struct part_record *part_ptr)
 		return 0;
 	}
 
+	if (!strcmp(part_ptr->nodes, "ALL")) {
+		bit_nset(part_ptr->node_bitmap, 0, node_record_count - 1);
+		xfree(part_ptr->nodes);
+		part_ptr->nodes = bitmap2node_name(part_ptr->node_bitmap);
+		bit_nclear(part_ptr->node_bitmap, 0, node_record_count - 1);
+	}
 	if ((host_list = hostlist_create(part_ptr->nodes)) == NULL) {
 		FREE_NULL_BITMAP(old_bitmap);
 		error("hostlist_create error on %s, %m",
@@ -138,9 +147,9 @@ static int _build_part_bitmap(struct part_record *part_ptr)
 	}
 
 	while ((this_node_name = hostlist_shift(host_list))) {
-		node_ptr = find_node_record(this_node_name);
+		node_ptr = find_node_record_no_alias(this_node_name);
 		if (node_ptr == NULL) {
-			error("_build_part_bitmap: invalid node name %s",
+			error("build_part_bitmap: invalid node name %s",
 				this_node_name);
 			free(this_node_name);
 			FREE_NULL_BITMAP(old_bitmap);
@@ -148,10 +157,19 @@ static int _build_part_bitmap(struct part_record *part_ptr)
 			return ESLURM_INVALID_NODE_NAME;
 		}
 		part_ptr->total_nodes++;
-		if (slurmctld_conf.fast_schedule)
+		if (slurmctld_conf.fast_schedule) {
 			part_ptr->total_cpus += node_ptr->config_ptr->cpus;
-		else
+			part_ptr->max_cpu_cnt = MAX(part_ptr->max_cpu_cnt,
+					node_ptr->config_ptr->cpus);
+			part_ptr->max_core_cnt = MAX(part_ptr->max_core_cnt,
+					node_ptr->config_ptr->cores);
+		} else {
 			part_ptr->total_cpus += node_ptr->cpus;
+			part_ptr->max_cpu_cnt  = MAX(part_ptr->max_cpu_cnt,
+					node_ptr->cpus);
+			part_ptr->max_core_cnt = MAX(part_ptr->max_core_cnt,
+					node_ptr->cores);
+		}
 		node_ptr->part_cnt++;
 		xrealloc(node_ptr->part_pptr, (node_ptr->part_cnt *
 			sizeof(struct part_record *)));
@@ -606,11 +624,12 @@ int load_all_part_state(void)
 					       &name_len, buffer);
 			safe_unpackstr_xmalloc(&alternate, &name_len, buffer);
 			safe_unpackstr_xmalloc(&nodes, &name_len, buffer);
-			if ((flags & PART_FLAG_DEFAULT_CLR) ||
-			    (flags & PART_FLAG_HIDDEN_CLR)  ||
-			    (flags & PART_FLAG_NO_ROOT_CLR) ||
+			if ((flags & PART_FLAG_DEFAULT_CLR)   ||
+			    (flags & PART_FLAG_EXC_USER_CLR)  ||
+			    (flags & PART_FLAG_HIDDEN_CLR)    ||
+			    (flags & PART_FLAG_NO_ROOT_CLR)   ||
 			    (flags & PART_FLAG_ROOT_ONLY_CLR) ||
-			    (flags & PART_FLAG_REQ_RESV_CLR) ||
+			    (flags & PART_FLAG_REQ_RESV_CLR)  ||
 			    (flags & PART_FLAG_LLN_CLR)) {
 				error("Invalid data for partition %s: flags=%u",
 				      part_name, flags);
@@ -650,11 +669,12 @@ int load_all_part_state(void)
 					       &name_len, buffer);
 			safe_unpackstr_xmalloc(&alternate, &name_len, buffer);
 			safe_unpackstr_xmalloc(&nodes, &name_len, buffer);
-			if ((flags & PART_FLAG_DEFAULT_CLR) ||
-			    (flags & PART_FLAG_HIDDEN_CLR)  ||
-			    (flags & PART_FLAG_NO_ROOT_CLR) ||
+			if ((flags & PART_FLAG_DEFAULT_CLR)   ||
+			    (flags & PART_FLAG_EXC_USER_CLR)  ||
+			    (flags & PART_FLAG_HIDDEN_CLR)    ||
+			    (flags & PART_FLAG_NO_ROOT_CLR)   ||
 			    (flags & PART_FLAG_ROOT_ONLY_CLR) ||
-			    (flags & PART_FLAG_REQ_RESV_CLR) ||
+			    (flags & PART_FLAG_REQ_RESV_CLR)  ||
 			    (flags & PART_FLAG_LLN_CLR)) {
 				error("Invalid data for partition %s: flags=%u",
 				      part_name, flags);
@@ -1297,6 +1317,16 @@ extern int update_part (update_part_msg_t * part_desc, bool create_flag)
 		part_ptr->flags &= (~PART_FLAG_NO_ROOT);
 	}
 
+	if (part_desc->flags & PART_FLAG_EXCLUSIVE_USER) {
+		info("update_part: setting exclusive_user for partition %s",
+		     part_desc->name);
+		part_ptr->flags |= PART_FLAG_EXCLUSIVE_USER;
+	} else if (part_desc->flags & PART_FLAG_EXC_USER_CLR) {
+		info("update_part: clearing exclusive_user for partition %s",
+		     part_desc->name);
+		part_ptr->flags &= (~PART_FLAG_EXCLUSIVE_USER);
+	}
+
 	if (part_desc->flags & PART_FLAG_DEFAULT) {
 		if (default_part_name == NULL) {
 			info("update_part: setting default partition to %s",
@@ -1457,6 +1487,7 @@ extern int update_part (update_part_msg_t * part_desc, bool create_flag)
 		    != SLURM_SUCCESS) {
 			error("update_part: invalid qos (%s) given",
 			      qos_rec.name);
+			error_code = ESLURM_INVALID_QOS;
 			part_ptr->qos_ptr = backup_qos_ptr;
 		} else {
 			xfree(part_ptr->qos_char);
@@ -1570,7 +1601,7 @@ extern int update_part (update_part_msg_t * part_desc, bool create_flag)
 			}
 		}
 
-		error_code = _build_part_bitmap(part_ptr);
+		error_code = build_part_bitmap(part_ptr);
 		if (error_code) {
 			xfree(part_ptr->nodes);
 			part_ptr->nodes = backup_node_list;
@@ -1721,7 +1752,66 @@ uid_t *_get_groups_members(char *group_names)
 	}
 	xfree(tmp_names);
 
+	group_uids = _remove_duplicate_uids(group_uids);
+
 	return group_uids;
+}
+
+/* remove_duplicate_uids()
+ */
+static uid_t *
+_remove_duplicate_uids(uid_t *u)
+{
+	int i;
+	int j;
+	int num;
+	uid_t *v;
+	uid_t cur;
+
+	if (!u)
+		return NULL;
+
+	num = 1;
+	for (i = 0; u[i]; i++)
+		++num;
+
+	v = xmalloc(num * sizeof(uid_t));
+	qsort(u, num, sizeof(uid_t), _uid_cmp);
+
+	j = 0;
+	cur = u[0];
+	for (i = 0; u[i]; i++) {
+		if (u[i] == cur)
+			continue;
+		v[j] = cur;
+		cur = u[i];
+		++j;
+	}
+	v[j] = cur;
+
+	xfree(u);
+	return v;
+}
+
+/* uid_cmp
+ */
+static int
+_uid_cmp(const void *x, const void *y)
+{
+	uid_t a;
+	uid_t b;
+
+	a = *(uid_t *)x;
+	b = *(uid_t *)y;
+
+	/* Sort in decreasing order so that the 0
+	 * as at the end.
+	 */
+	if (a > b)
+		return -1;
+	if (a < b)
+		return 1;
+	return 0;
 }
 
 /* _get_group_tlm - return the time of last modification for the GROUP_FILE */

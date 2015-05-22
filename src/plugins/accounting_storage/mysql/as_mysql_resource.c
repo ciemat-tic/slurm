@@ -367,8 +367,9 @@ static int _fill_in_res_rec(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *res)
 
 	query = xstrdup_printf("select distinct %s from %s as t1 "
 			       "left outer join "
-			       "%s as t2 on (res_id=id) where id=%u "
-			       "&& (t2.deleted=0) group by id",
+			       "%s as t2 on (res_id=id && "
+			       "t2.deleted=0) "
+			       "where id=%u group by id",
 			       tmp, res_table, clus_res_table, res->id);
 
 	xfree(tmp);
@@ -405,6 +406,8 @@ static int _fill_in_res_rec(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *res)
 		res->type = slurm_atoul(row[RES_REQ_TYPE]);
 	if (row[RES_REQ_PU] && row[RES_REQ_PU][0])
 		res->percent_used = slurm_atoul(row[RES_REQ_PU]);
+	else
+		res->percent_used = 0;
 
 	mysql_free_result(result);
 
@@ -644,16 +647,17 @@ static List _get_clus_res(mysql_conn_t *mysql_conn, uint32_t res_id,
 	}
 	xfree(query);
 
-	ret_list = list_create(slurmdb_destroy_clus_res_rec);
-
 	if (!mysql_num_rows(result)) {
 		mysql_free_result(result);
-		return ret_list;
+		return NULL;
 	}
+
+	ret_list = list_create(slurmdb_destroy_clus_res_rec);
 
 	while ((row = mysql_fetch_row(result))) {
 		slurmdb_clus_res_rec_t *clus_res_rec =
 			xmalloc(sizeof(slurmdb_clus_res_rec_t));
+
 		list_append(ret_list, clus_res_rec);
 
 		if (row[0] && row[0][0])
@@ -775,9 +779,12 @@ extern List as_mysql_get_res(mysql_conn_t *mysql_conn, uid_t uid,
 
 	query = xstrdup_printf("select distinct %s from %s as t1 "
 			       "left outer join "
-			       "%s as t2 on (res_id=id) %s group by "
+			       "%s as t2 on (res_id=id%s) %s group by "
 			       "id",
-			       tmp, res_table, clus_res_table, extra);
+			       tmp, res_table, clus_res_table,
+			       (!res_cond || !res_cond->with_deleted) ?
+			       " && t2.deleted=0" : "",
+			       extra);
 	xfree(tmp);
 	xfree(extra);
 
@@ -794,10 +801,35 @@ extern List as_mysql_get_res(mysql_conn_t *mysql_conn, uid_t uid,
 
 	res_list = list_create(slurmdb_destroy_res_rec);
 	while ((row = mysql_fetch_row(result))) {
-		slurmdb_res_rec_t *res = xmalloc(sizeof(slurmdb_res_rec_t));
+		uint32_t id = 0;
+		List clus_res_list = NULL;
+		slurmdb_res_rec_t *res;
+
+		if (row[RES_REQ_ID] && row[RES_REQ_ID][0])
+			id = slurm_atoul(row[RES_REQ_ID]);
+		else {
+			error("as_mysql_get_res: no id? this "
+			      "should never happen");
+			continue;
+		}
+
+		if (res_cond && res_cond->with_clusters) {
+			clus_res_list =	_get_clus_res(
+				mysql_conn, id, clus_extra);
+			/* This means the clusters requested don't have
+			   claim to this resource, so continue. */
+			if (!clus_res_list && (res_cond->with_clusters == 1))
+				continue;
+		}
+
+		res = xmalloc(sizeof(slurmdb_res_rec_t));
 		list_append(res_list, res);
 
 		slurmdb_init_res_rec(res, 0);
+
+		res->id = id;
+		res->clus_res_list = clus_res_list;
+		clus_res_list = NULL;
 
 		if (row[RES_REQ_COUNT] && row[RES_REQ_COUNT][0])
 			res->count = slurm_atoul(row[RES_REQ_COUNT]);
@@ -805,8 +837,6 @@ extern List as_mysql_get_res(mysql_conn_t *mysql_conn, uid_t uid,
 			res->description = xstrdup(row[RES_REQ_DESC]);
 		if (row[RES_REQ_FLAGS] && row[RES_REQ_FLAGS][0])
 			res->flags = slurm_atoul(row[RES_REQ_FLAGS]);
-		if (row[RES_REQ_ID] && row[RES_REQ_ID][0])
-			res->id = slurm_atoul(row[RES_REQ_ID]);
 		if (row[RES_REQ_MANAGER] && row[RES_REQ_MANAGER][0])
 			res->manager = xstrdup(row[RES_REQ_MANAGER]);
 		if (row[RES_REQ_NAME] && row[RES_REQ_NAME][0])
@@ -815,11 +845,11 @@ extern List as_mysql_get_res(mysql_conn_t *mysql_conn, uid_t uid,
 			res->server = xstrdup(row[RES_REQ_SERVER]);
 		if (row[RES_REQ_TYPE] && row[RES_REQ_TYPE][0])
 			res->type = slurm_atoul(row[RES_REQ_TYPE]);
+
 		if (row[RES_REQ_PU] && row[RES_REQ_PU][0])
 			res->percent_used = slurm_atoul(row[RES_REQ_PU]);
-		if (res_cond && res_cond->with_clusters)
-			res->clus_res_list =
-				_get_clus_res(mysql_conn, res->id, clus_extra);
+		else
+			res->percent_used = 0;
 	}
 	mysql_free_result(result);
 	xfree(clus_extra);
@@ -863,8 +893,11 @@ extern List as_mysql_remove_res(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	query = xstrdup_printf("select id, name, server, cluster "
 			       "from %s as t1 left outer join "
-			       "%s as t2 on (res_id = id) %s && %s;",
-			       res_table, clus_res_table, extra, clus_extra);
+			       "%s as t2 on (res_id = id%s) %s && %s;",
+			       res_table, clus_res_table,
+			       (!res_cond || !res_cond->with_deleted) ?
+			       " && t2.deleted=0" : "",
+			       extra, clus_extra);
 	xfree(clus_extra);
 
 	if (debug_flags & DEBUG_FLAG_DB_RES)
@@ -1031,11 +1064,14 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 	res_cond->with_deleted = 0;
 	_setup_res_cond(res_cond, &extra);
 	query_clusters += _setup_clus_res_cond(res_cond, &clus_extra);
+
 	if (query_clusters || send_update)
 		query = xstrdup_printf("select id, name, server, cluster "
 				       "from %s as t1 left outer join "
-				       "%s as t2 on (res_id = id) %s && %s;",
+				       "%s as t2 on (res_id = id%s) %s && %s;",
 				       res_table, clus_res_table,
+				       (!res_cond || !res_cond->with_deleted) ?
+				       " && t2.deleted=0" : "",
 				       extra, clus_extra);
 	else
 		query = xstrdup_printf("select id, name, server "

@@ -50,6 +50,8 @@
 #include <sys/types.h>
 #include <pwd.h>
 
+extern int with_slurmdbd;
+
 extern int slurm_acct_storage_init(char *loc); /* load the plugin */
 extern int slurm_acct_storage_fini(void); /* unload the plugin */
 
@@ -116,6 +118,14 @@ extern int acct_storage_g_add_accounts(void *db_conn, uint32_t uid,
  */
 extern int acct_storage_g_add_clusters(void *db_conn, uint32_t uid,
 				       List cluster_list);
+
+/*
+ * add tres to accounting system
+ * IN:  tres_list List of slurmdb_tres_rec_t *
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern int acct_storage_g_add_tres(void *db_conn, uint32_t uid,
+				   List tres_list_in);
 
 /*
  * add associations to accounting system
@@ -357,6 +367,15 @@ extern List acct_storage_g_get_config(void *db_conn, char *config_name);
 
 /*
  * get info from the storage
+ * IN:  slurmdb_tres_cond_t *
+ * RET: List of slurmdb_tres_rec_t *
+ * note List needs to be freed when called
+ */
+extern List acct_storage_g_get_tres(
+	void *db_conn, uint32_t uid, slurmdb_tres_cond_t *tres_cond);
+
+/*
+ * get info from the storage
  * IN:  slurmdb_assoc_cond_t *
  * RET: List of slurmdb_assoc_rec_t *
  * note List needs to be freed when called
@@ -484,9 +503,9 @@ extern int clusteracct_storage_g_node_up(void *db_conn,
 					 struct node_record *node_ptr,
 					 time_t event_time);
 
-extern int clusteracct_storage_g_cluster_cpus(void *db_conn,
+extern int clusteracct_storage_g_cluster_tres(void *db_conn,
 					      char *cluster_nodes,
-					      uint32_t cpus,
+					      char *tres_str_in,
 					      time_t event_time);
 
 extern int clusteracct_storage_g_register_ctld(void *db_conn, uint16_t port);
@@ -494,6 +513,12 @@ extern int clusteracct_storage_g_register_disconn_ctld(
 	void *db_conn, char *control_host);
 extern int clusteracct_storage_g_fini_ctld(void *db_conn,
 					   slurmdb_cluster_rec_t *cluster_rec);
+
+/*
+ * load into the storage the start of a job
+ */
+extern int jobacct_storage_job_start_direct(void *db_conn,
+					    struct job_record *job_ptr);
 
 /*
  * load into the storage the start of a job

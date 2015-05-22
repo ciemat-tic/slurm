@@ -38,15 +38,16 @@
 
 #include <stdlib.h>
 
-#include "src/common/slurmdb_defs.h"
 #include "src/common/assoc_mgr.h"
-#include "src/common/xmalloc.h"
-#include "src/common/xstring.h"
+#include "src/common/node_select.h"
+#include "src/common/parse_time.h"
+#include "src/common/slurm_auth.h"
 #include "src/common/slurm_strcasestr.h"
 #include "src/common/slurm_protocol_defs.h"
-#include "src/common/parse_time.h"
-#include "src/common/node_select.h"
-#include "src/common/slurm_auth.h"
+#include "src/common/slurm_time.h"
+#include "src/common/slurmdb_defs.h"
+#include "src/common/xmalloc.h"
+#include "src/common/xstring.h"
 #include "src/slurmdbd/read_config.h"
 
 #define FORMAT_STRING_SIZE 34
@@ -57,6 +58,8 @@ static char *local_cluster_name; /* name of local_cluster      */
 
 static void _free_res_cond_members(slurmdb_res_cond_t *res_cond);
 static void _free_res_rec_members(slurmdb_res_rec_t *res);
+
+strong_alias(get_qos_complete_str_bitstr, slurmdb_get_qos_complete_str_bitstr);
 
 static void _free_assoc_rec_members(slurmdb_assoc_rec_t *assoc)
 {
@@ -85,13 +88,13 @@ static void _free_clus_res_rec_members(slurmdb_clus_res_rec_t *clus_res)
 static void _free_cluster_rec_members(slurmdb_cluster_rec_t *cluster)
 {
 	if (cluster) {
-		if (cluster->accounting_list)
-			list_destroy(cluster->accounting_list);
+		FREE_NULL_LIST(cluster->accounting_list);
 		xfree(cluster->control_host);
 		xfree(cluster->dim_size);
 		xfree(cluster->name);
 		xfree(cluster->nodes);
 		slurmdb_destroy_assoc_rec(cluster->root_assoc);
+		xfree(cluster->tres_str);
 	}
 }
 
@@ -123,6 +126,15 @@ static void _free_cluster_cond_members(slurmdb_cluster_cond_t *cluster_cond)
 	if (cluster_cond) {
 		if (cluster_cond->cluster_list)
 			list_destroy(cluster_cond->cluster_list);
+	}
+}
+
+static void _free_tres_cond_members(slurmdb_tres_cond_t *tres_cond)
+{
+	if (tres_cond) {
+		FREE_NULL_LIST(tres_cond->id_list);
+		FREE_NULL_LIST(tres_cond->name_list);
+		FREE_NULL_LIST(tres_cond->type_list);
 	}
 }
 
@@ -513,7 +525,6 @@ extern slurmdb_step_rec_t *slurmdb_create_step_rec()
 	step->stepid = (uint32_t)NO_VAL;
 	step->state = NO_VAL;
 	step->exitcode = NO_VAL;
-	step->ncpus = (uint32_t)NO_VAL;
 	step->elapsed = (uint32_t)NO_VAL;
 	step->tot_cpu_sec = (uint32_t)NO_VAL;
 	step->tot_cpu_usec = (uint32_t)NO_VAL;
@@ -575,6 +586,8 @@ extern void slurmdb_destroy_cluster_accounting_rec(void *object)
 		(slurmdb_cluster_accounting_rec_t *)object;
 
 	if (clusteracct_rec) {
+		slurmdb_destroy_tres_rec_noalloc(
+			&clusteracct_rec->tres_rec);
 		xfree(clusteracct_rec);
 	}
 }
@@ -607,6 +620,8 @@ extern void slurmdb_destroy_accounting_rec(void *object)
 		(slurmdb_accounting_rec_t *)object;
 
 	if (slurmdb_accounting) {
+		slurmdb_destroy_tres_rec_noalloc(
+			&slurmdb_accounting->tres_rec);
 		xfree(slurmdb_accounting);
 	}
 }
@@ -632,6 +647,7 @@ extern void slurmdb_destroy_event_rec(void *object)
 		xfree(slurmdb_event->cluster_nodes);
 		xfree(slurmdb_event->node_name);
 		xfree(slurmdb_event->reason);
+		xfree(slurmdb_event->tres_str);
 
 		xfree(slurmdb_event);
 	}
@@ -656,6 +672,7 @@ extern void slurmdb_destroy_job_rec(void *object)
 			list_destroy(job->steps);
 			job->steps = NULL;
 		}
+		xfree(job->tres_alloc_str);
 		xfree(job->user);
 		xfree(job->wckey);
 		xfree(job);
@@ -681,6 +698,7 @@ extern void slurmdb_destroy_reservation_rec(void *object)
 		xfree(slurmdb_resv->name);
 		xfree(slurmdb_resv->nodes);
 		xfree(slurmdb_resv->node_inx);
+		xfree(slurmdb_resv->tres_str);
 		xfree(slurmdb_resv);
 	}
 }
@@ -692,6 +710,7 @@ extern void slurmdb_destroy_step_rec(void *object)
 		xfree(step->nodes);
 		xfree(step->pid_str);
 		xfree(step->stepname);
+		xfree(step->tres_alloc_str);
 		xfree(step);
 	}
 }
@@ -742,6 +761,27 @@ extern void slurmdb_destroy_archive_rec(void *object)
 	}
 }
 
+extern void slurmdb_destroy_tres_rec_noalloc(void *object)
+{
+	slurmdb_tres_rec_t *tres_rec = (slurmdb_tres_rec_t *)object;
+
+	if (!tres_rec)
+		return;
+
+	xfree(tres_rec->name);
+	xfree(tres_rec->type);
+}
+
+extern void slurmdb_destroy_tres_rec(void *object)
+{
+	slurmdb_tres_rec_t *tres_rec = (slurmdb_tres_rec_t *)object;
+
+	if (tres_rec) {
+		slurmdb_destroy_tres_rec_noalloc(tres_rec);
+		xfree(tres_rec);
+	}
+}
+
 extern void slurmdb_destroy_report_assoc_rec(void *object)
 {
 	slurmdb_report_assoc_rec_t *slurmdb_report_assoc =
@@ -750,6 +790,7 @@ extern void slurmdb_destroy_report_assoc_rec(void *object)
 		xfree(slurmdb_report_assoc->acct);
 		xfree(slurmdb_report_assoc->cluster);
 		xfree(slurmdb_report_assoc->parent_acct);
+		FREE_NULL_LIST(slurmdb_report_assoc->tres_list);
 		xfree(slurmdb_report_assoc->user);
 		xfree(slurmdb_report_assoc);
 	}
@@ -761,11 +802,10 @@ extern void slurmdb_destroy_report_user_rec(void *object)
 		(slurmdb_report_user_rec_t *)object;
 	if (slurmdb_report_user) {
 		xfree(slurmdb_report_user->acct);
-		if (slurmdb_report_user->acct_list)
-			list_destroy(slurmdb_report_user->acct_list);
-		if (slurmdb_report_user->assoc_list)
-			list_destroy(slurmdb_report_user->assoc_list);
+		FREE_NULL_LIST(slurmdb_report_user->acct_list);
+		FREE_NULL_LIST(slurmdb_report_user->assoc_list);
 		xfree(slurmdb_report_user->name);
+		FREE_NULL_LIST(slurmdb_report_user->tres_list);
 		xfree(slurmdb_report_user);
 	}
 }
@@ -775,11 +815,10 @@ extern void slurmdb_destroy_report_cluster_rec(void *object)
 	slurmdb_report_cluster_rec_t *slurmdb_report_cluster =
 		(slurmdb_report_cluster_rec_t *)object;
 	if (slurmdb_report_cluster) {
-		if (slurmdb_report_cluster->assoc_list)
-			list_destroy(slurmdb_report_cluster->assoc_list);
+		FREE_NULL_LIST(slurmdb_report_cluster->assoc_list);
 		xfree(slurmdb_report_cluster->name);
-		if (slurmdb_report_cluster->user_list)
-			list_destroy(slurmdb_report_cluster->user_list);
+		FREE_NULL_LIST(slurmdb_report_cluster->tres_list);
+		FREE_NULL_LIST(slurmdb_report_cluster->user_list);
 		xfree(slurmdb_report_cluster);
 	}
 }
@@ -821,6 +860,17 @@ extern void slurmdb_destroy_cluster_cond(void *object)
 	if (slurmdb_cluster) {
 		_free_cluster_cond_members(slurmdb_cluster);
 		xfree(slurmdb_cluster);
+	}
+}
+
+extern void slurmdb_destroy_tres_cond(void *object)
+{
+	slurmdb_tres_cond_t *slurmdb_tres =
+		(slurmdb_tres_cond_t *)object;
+
+	if (slurmdb_tres) {
+		_free_tres_cond_members(slurmdb_tres);
+		xfree(slurmdb_tres);
 	}
 }
 
@@ -1120,8 +1170,8 @@ extern void slurmdb_destroy_report_job_grouping(void *object)
 	slurmdb_report_job_grouping_t *job_grouping =
 		(slurmdb_report_job_grouping_t *)object;
 	if (job_grouping) {
-		if (job_grouping->jobs)
-			list_destroy(job_grouping->jobs);
+		FREE_NULL_LIST(job_grouping->jobs);
+		FREE_NULL_LIST(job_grouping->tres_list);
 		xfree(job_grouping);
 	}
 }
@@ -1132,8 +1182,8 @@ extern void slurmdb_destroy_report_acct_grouping(void *object)
 		(slurmdb_report_acct_grouping_t *)object;
 	if (acct_grouping) {
 		xfree(acct_grouping->acct);
-		if (acct_grouping->groups)
-			list_destroy(acct_grouping->groups);
+		FREE_NULL_LIST(acct_grouping->groups);
+		FREE_NULL_LIST(acct_grouping->tres_list);
 		xfree(acct_grouping);
 	}
 }
@@ -1144,8 +1194,8 @@ extern void slurmdb_destroy_report_cluster_grouping(void *object)
 		(slurmdb_report_cluster_grouping_t *)object;
 	if (cluster_grouping) {
 		xfree(cluster_grouping->cluster);
-		if (cluster_grouping->acct_list)
-			list_destroy(cluster_grouping->acct_list);
+		FREE_NULL_LIST(cluster_grouping->acct_list);
+		FREE_NULL_LIST(cluster_grouping->tres_list);
 		xfree(cluster_grouping);
 	}
 }
@@ -1353,6 +1403,18 @@ extern void slurmdb_init_wckey_rec(slurmdb_wckey_rec_t *wckey, bool free_it)
 		_free_wckey_rec_members(wckey);
 	memset(wckey, 0, sizeof(slurmdb_wckey_rec_t));
 	wckey->is_def = (uint16_t)NO_VAL;
+}
+
+extern void slurmdb_init_tres_cond(slurmdb_tres_cond_t *tres,
+				    bool free_it)
+{
+	if (!tres)
+		return;
+
+	if (free_it)
+		_free_tres_cond_members(tres);
+	memset(tres, 0, sizeof(slurmdb_tres_cond_t));
+	tres->count = NO_VAL;
 }
 
 extern void slurmdb_init_cluster_cond(slurmdb_cluster_cond_t *cluster,
@@ -2186,16 +2248,16 @@ extern int slurmdb_report_set_start_end_time(time_t *start, time_t *end)
 //	info("now got %d and %d sent", (*start), (*end));
 	/* Default is going to be the last day */
 	if (!sent_end) {
-		if (!localtime_r(&my_time, &end_tm)) {
+		if (!slurm_localtime_r(&my_time, &end_tm)) {
 			error("Couldn't get localtime from end %ld",
 			      (long)my_time);
 			return SLURM_ERROR;
 		}
 		end_tm.tm_hour = 0;
-		//(*end) = mktime(&end_tm);
+		//(*end) = slurm_mktime(&end_tm);
 	} else {
 		temp_time = sent_end;
-		if (!localtime_r(&temp_time, &end_tm)) {
+		if (!slurm_localtime_r(&temp_time, &end_tm)) {
 			error("Couldn't get localtime from user end %ld",
 			      (long)my_time);
 			return SLURM_ERROR;
@@ -2209,20 +2271,20 @@ extern int slurmdb_report_set_start_end_time(time_t *start, time_t *end)
 	end_tm.tm_sec = 0;
 	end_tm.tm_min = 0;
 	end_tm.tm_isdst = -1;
-	(*end) = mktime(&end_tm);
+	(*end) = slurm_mktime(&end_tm);
 
 	if (!sent_start) {
-		if (!localtime_r(&my_time, &start_tm)) {
+		if (!slurm_localtime_r(&my_time, &start_tm)) {
 			error("Couldn't get localtime from start %ld",
 			      (long)my_time);
 			return SLURM_ERROR;
 		}
 		start_tm.tm_hour = 0;
 		start_tm.tm_mday--;
-		//(*start) = mktime(&start_tm);
+		//(*start) = slurm_mktime(&start_tm);
 	} else {
 		temp_time = sent_start;
-		if (!localtime_r(&temp_time, &start_tm)) {
+		if (!slurm_localtime_r(&temp_time, &start_tm)) {
 			error("Couldn't get localtime from user start %ld",
 			      (long)my_time);
 			return SLURM_ERROR;
@@ -2235,7 +2297,7 @@ extern int slurmdb_report_set_start_end_time(time_t *start, time_t *end)
 	start_tm.tm_sec = 0;
 	start_tm.tm_min = 0;
 	start_tm.tm_isdst = -1;
-	(*start) = mktime(&start_tm);
+	(*start) = slurm_mktime(&start_tm);
 
 	if ((*end)-(*start) < 3600)
 		(*end) = (*start) + 3600;
@@ -2600,7 +2662,8 @@ extern slurmdb_report_cluster_rec_t *slurmdb_cluster_rec_2_report(
 {
 	slurmdb_report_cluster_rec_t *slurmdb_report_cluster;
 	slurmdb_cluster_accounting_rec_t *accting = NULL;
-	ListIterator cluster_itr = NULL;
+	slurmdb_tres_rec_t *tres_rec;
+	ListIterator itr = NULL;
 	int count;
 
 	xassert(cluster);
@@ -2610,19 +2673,18 @@ extern slurmdb_report_cluster_rec_t *slurmdb_cluster_rec_2_report(
 	if (!(count = list_count(cluster->accounting_list)))
 		return slurmdb_report_cluster;
 
-	/* get the amount of time and the average cpu count
+	/* get the amount of time and the average count
 	   during the time we are looking at */
-	cluster_itr = list_iterator_create(cluster->accounting_list);
-	while((accting = list_next(cluster_itr))) {
-		slurmdb_report_cluster->cpu_secs += accting->alloc_secs
-			+ accting->down_secs + accting->idle_secs
-			+ accting->resv_secs + accting->pdown_secs;
-		slurmdb_report_cluster->cpu_count += accting->cpu_count;
-		slurmdb_report_cluster->consumed_energy += accting->consumed_energy;
-	}
-	list_iterator_destroy(cluster_itr);
+	itr = list_iterator_create(cluster->accounting_list);
+	while ((accting = list_next(itr)))
+		slurmdb_add_cluster_accounting_to_tres_list(
+			accting, &slurmdb_report_cluster->tres_list);
+	list_iterator_destroy(itr);
 
-	slurmdb_report_cluster->cpu_count /= count;
+	itr = list_iterator_create(slurmdb_report_cluster->tres_list);
+	while ((tres_rec = list_next(itr)))
+		tres_rec->count /= tres_rec->rec_count;
+	list_iterator_destroy(itr);
 
 	return slurmdb_report_cluster;
 }
@@ -2734,4 +2796,463 @@ end_it:
 		list_destroy(cluster_list);
 
 	return rc;
+}
+
+extern slurmdb_tres_rec_t *slurmdb_copy_tres_rec(slurmdb_tres_rec_t *tres)
+{
+	slurmdb_tres_rec_t *tres_out = NULL;
+
+	if (!tres)
+		return tres_out;
+
+	tres_out = xmalloc_nz(sizeof(slurmdb_tres_rec_t));
+	memcpy(tres_out, tres, sizeof(slurmdb_tres_rec_t));
+	tres_out->name = xstrdup(tres->name);
+	tres_out->type = xstrdup(tres->type);
+	tres_out->count = tres->count;
+
+	return tres_out;
+}
+
+extern List slurmdb_copy_tres_list(List tres)
+{
+	slurmdb_tres_rec_t *tres_rec = NULL;
+	ListIterator itr;
+	List tres_out;
+
+	if (!tres)
+		return NULL;
+
+	tres_out = list_create(slurmdb_destroy_tres_rec);
+
+	itr = list_iterator_create(tres);
+	while ((tres_rec = list_next(itr)))
+		list_append(tres_out, slurmdb_copy_tres_rec(tres_rec));
+	list_iterator_destroy(itr);
+
+	return tres_out;
+}
+
+extern List slurmdb_diff_tres_list(List tres_list_old, List tres_list_new)
+{
+	slurmdb_tres_rec_t *tres_rec = NULL, *tres_rec_old;
+	ListIterator itr;
+	List tres_out;
+
+	if (!tres_list_new || !list_count(tres_list_new))
+		return NULL;
+
+	tres_out = slurmdb_copy_tres_list(tres_list_new);
+
+	itr = list_iterator_create(tres_out);
+	while ((tres_rec = list_next(itr))) {
+		if (!(tres_rec_old = list_find_first(tres_list_old,
+						     slurmdb_find_tres_in_list,
+						     &tres_rec->id)))
+			continue;
+		if (tres_rec_old->count == tres_rec->count)
+			list_delete_item(itr);
+	}
+	list_iterator_destroy(itr);
+
+	return tres_out;
+}
+
+extern char *slurmdb_tres_string_combine_lists(
+	List tres_list_old, List tres_list_new)
+{
+	slurmdb_tres_rec_t *tres_rec = NULL, *tres_rec_old;
+	ListIterator itr;
+	char *tres_str = NULL;
+
+	if (!tres_list_new || !list_count(tres_list_new))
+		return NULL;
+
+	itr = list_iterator_create(tres_list_new);
+	while ((tres_rec = list_next(itr))) {
+		if (!(tres_rec_old = list_find_first(tres_list_old,
+						     slurmdb_find_tres_in_list,
+						     &tres_rec->id)))
+			continue;
+		if (tres_str)
+			xstrcat(tres_str, ",");
+
+		xstrfmtcat(tres_str, "%u=%"PRIu64,
+			   tres_rec->id, tres_rec->count);
+	}
+	list_iterator_destroy(itr);
+
+	return tres_str;
+}
+
+/* caller must xfree this char * returned */
+extern char *slurmdb_make_tres_string(List tres, bool simple)
+{
+	char *tres_str = NULL;
+	ListIterator itr;
+	slurmdb_tres_rec_t *tres_rec;
+
+	if (!tres)
+		return tres_str;
+
+	itr = list_iterator_create(tres);
+	while ((tres_rec = list_next(itr))) {
+		if (simple || !tres_rec->type)
+			xstrfmtcat(tres_str, "%s%u=%"PRIu64,
+				   tres_str ? "," : "",
+				   tres_rec->id, tres_rec->count);
+
+		else
+			xstrfmtcat(tres_str, "%s%s%s%s=%"PRIu64,
+				   tres_str ? "," : "",
+				   tres_rec->type,
+				   tres_rec->name ? "/" : "",
+				   tres_rec->name ? tres_rec->name : "",
+				   tres_rec->count);
+	}
+	list_iterator_destroy(itr);
+
+	return tres_str;
+}
+
+extern char *slurmdb_make_tres_string_from_simple(
+	char *tres_in, List full_tres_list)
+{
+	char *tres_str = NULL;
+	char *tmp_str = tres_in;
+	int id;
+	uint64_t count;
+	slurmdb_tres_rec_t *tres_rec;
+
+	if (!full_tres_list || !tmp_str || !tmp_str[0]
+	    || tmp_str[0] < '0' || tmp_str[0] > '9')
+		return tres_str;
+
+	while (tmp_str) {
+		id = atoi(tmp_str);
+		if (id <= 0) {
+			error("slurmdb_make_tres_string_from_simple: no id "
+			      "found at %s instead", tmp_str);
+			goto get_next;
+		}
+
+		if (!(tres_rec = list_find_first(
+			      full_tres_list, slurmdb_find_tres_in_list,
+			      &id))) {
+			debug("No tres known by id %d", id);
+			goto get_next;
+		}
+
+		if (!(tmp_str = strchr(tmp_str, '='))) {
+			error("slurmdb_make_tres_string_from_simple: "
+			      "no value found");
+			break;
+		}
+		count = slurm_atoull(++tmp_str);
+
+		if (tres_str)
+			xstrcat(tres_str, ",");
+		if (!tres_rec->type)
+			xstrfmtcat(tres_str, "%u=%"PRIu64"",
+				   tres_rec->id, count);
+
+		else
+			xstrfmtcat(tres_str, "%s%s%s=%"PRIu64"",
+				   tres_rec->type,
+				   tres_rec->name ? "/" : "",
+				   tres_rec->name ? tres_rec->name : "",
+				   count);
+	get_next:
+		if (!(tmp_str = strchr(tmp_str, ',')))
+			break;
+		tmp_str++;
+	}
+
+	return tres_str;
+}
+
+/* This only works on a simple id=count list, not on a formatted list */
+extern List slurmdb_tres_list_from_string(char *tres)
+{
+	List tres_list = NULL;
+	char *tmp_str = tres;
+	int id;
+	uint64_t count;
+	slurmdb_tres_rec_t *tres_rec;
+
+	if (!tres || !tres[0])
+		return tres_list;
+
+	while (tmp_str) {
+		id = atoi(tmp_str);
+		if (id < 0) {
+			error("slurmdb_tres_list_from_string: no id "
+			      "found at %s instead", tmp_str);
+			break;
+		}
+		if (!(tmp_str = strchr(tmp_str, '='))) {
+			error("slurmdb_tres_list_from_string: no value found");
+			break;
+		}
+		count = slurm_atoull(++tmp_str);
+
+		if (!tres_list)
+			tres_list = list_create(slurmdb_destroy_tres_rec);
+
+		if (!(tres_rec = list_find_first(
+			      tres_list, slurmdb_find_tres_in_list, &id))) {
+			tres_rec = xmalloc(sizeof(slurmdb_tres_rec_t));
+			tres_rec->id = id;
+			list_append(tres_list, tres_rec);
+		} else
+			debug("TRES %u was already here with count %"PRIu64", "
+			      "replacing with %"PRIu64,
+			      tres_rec->id, tres_rec->count, count);
+
+		tres_rec->count = count;
+
+		if (!(tmp_str = strchr(tmp_str, ',')))
+			break;
+		tmp_str++;
+	}
+
+	return tres_list;
+}
+
+extern slurmdb_tres_rec_t *slurmdb_find_tres_in_string(
+	char *tres_str_in, int id)
+{
+	slurmdb_tres_rec_t *tres_rec = NULL;
+	char *tmp_str = tres_str_in;
+
+	if (!tmp_str || !tmp_str[0])
+		return tres_rec;
+
+	while (tmp_str) {
+		if (id == atoi(tmp_str)) {
+			if (!(tmp_str = strchr(tmp_str, '='))) {
+				error("slurmdb_tres_list_from_string: "
+				      "no value found");
+				break;
+			}
+			tres_rec = xmalloc(sizeof(slurmdb_tres_rec_t));
+			tres_rec->id = id;
+			tres_rec->count = slurm_atoull(++tmp_str);
+			return tres_rec;
+		}
+
+		if (!(tmp_str = strchr(tmp_str, ',')))
+			break;
+		tmp_str++;
+	}
+
+	return tres_rec;
+}
+
+extern uint64_t slurmdb_find_tres_count_in_string(char *tres_str_in, int id)
+{
+	char *tmp_str = tres_str_in;
+
+	if (!tmp_str || !tmp_str[0])
+		return 0;
+
+	while (tmp_str) {
+		if (id == atoi(tmp_str)) {
+			if (!(tmp_str = strchr(tmp_str, '='))) {
+				error("slurmdb_find_tres_count_in_string: "
+				      "no value found");
+				break;
+			}
+			return slurm_atoull(++tmp_str);
+		}
+
+		if (!(tmp_str = strchr(tmp_str, ',')))
+			break;
+		tmp_str++;
+	}
+
+	return 0;
+}
+
+extern int slurmdb_find_tres_in_list(void *x, void *key)
+{
+	slurmdb_tres_rec_t *tres_rec = (slurmdb_tres_rec_t *)x;
+	uint32_t tres_id = *(uint32_t *)key;
+
+	if (tres_rec->id == tres_id)
+		return 1;
+
+	return 0;
+}
+
+extern int slurmdb_find_cluster_accting_tres_in_list(void *x, void *key)
+{
+	slurmdb_cluster_accounting_rec_t *object =
+		(slurmdb_cluster_accounting_rec_t *)x;
+	uint32_t tres_id = *(uint32_t *)key;
+
+	if (object->tres_rec.id == tres_id)
+		return 1;
+
+	return 0;
+}
+
+extern int slurmdb_add_cluster_accounting_to_tres_list(
+	slurmdb_cluster_accounting_rec_t *accting,
+	List *tres)
+{
+	slurmdb_tres_rec_t *tres_rec = NULL;
+
+	if (!*tres)
+		*tres = list_create(slurmdb_destroy_tres_rec);
+	else
+		tres_rec = list_find_first(*tres,
+					   slurmdb_find_tres_in_list,
+					   &accting->tres_rec.id);
+
+	if (!tres_rec) {
+		tres_rec = slurmdb_copy_tres_rec(&accting->tres_rec);
+		if (!tres_rec) {
+			error("slurmdb_copy_tres_rec returned NULL");
+			return SLURM_ERROR;
+		}
+		list_push(*tres, tres_rec);
+	}
+
+	tres_rec->alloc_secs += accting->alloc_secs
+		+ accting->down_secs + accting->idle_secs
+		+ accting->resv_secs + accting->pdown_secs;
+	tres_rec->count += accting->tres_rec.count;
+	tres_rec->rec_count++;
+
+	return SLURM_SUCCESS;
+}
+
+extern int slurmdb_add_accounting_to_tres_list(
+	slurmdb_accounting_rec_t *accting,
+	List *tres)
+{
+	slurmdb_tres_rec_t *tres_rec = NULL;
+
+	if (!*tres)
+		*tres = list_create(slurmdb_destroy_tres_rec);
+	else
+		tres_rec = list_find_first(*tres,
+					   slurmdb_find_tres_in_list,
+					   &accting->tres_rec.id);
+
+	if (!tres_rec) {
+		tres_rec = slurmdb_copy_tres_rec(&accting->tres_rec);
+		if (!tres_rec) {
+			error("slurmdb_copy_tres_rec returned NULL");
+			return SLURM_ERROR;
+		}
+		list_push(*tres, tres_rec);
+	}
+
+	tres_rec->alloc_secs += accting->alloc_secs;
+
+	return SLURM_SUCCESS;
+}
+
+extern int slurmdb_add_time_from_count_to_tres_list(
+	slurmdb_tres_rec_t *tres_in, List *tres, time_t elapsed)
+{
+	slurmdb_tres_rec_t *tres_rec = NULL;
+
+	if (!elapsed)
+		return SLURM_SUCCESS;
+
+	if (!*tres)
+		*tres = list_create(slurmdb_destroy_tres_rec);
+	else
+		tres_rec = list_find_first(*tres,
+					   slurmdb_find_tres_in_list,
+					   &tres_in->id);
+
+	if (!tres_rec) {
+		tres_rec = slurmdb_copy_tres_rec(tres_in);
+		if (!tres_rec) {
+			error("slurmdb_copy_tres_rec returned NULL");
+			return SLURM_ERROR;
+		}
+		list_push(*tres, tres_rec);
+	}
+
+	tres_rec->alloc_secs +=
+		((uint64_t)tres_in->count * (uint64_t)elapsed);
+
+	return SLURM_SUCCESS;
+}
+
+extern int slurmdb_sum_accounting_list(
+	slurmdb_cluster_accounting_rec_t *accting,
+	List *total_tres_acct)
+{
+	slurmdb_cluster_accounting_rec_t *total_acct = NULL;
+
+	if (!*total_tres_acct)
+		*total_tres_acct = list_create(
+			slurmdb_destroy_cluster_accounting_rec);
+	else
+		total_acct = list_find_first(
+			*total_tres_acct,
+			slurmdb_find_cluster_accting_tres_in_list,
+			&accting->tres_rec.id);
+
+	if (!total_acct) {
+		total_acct = xmalloc(sizeof(slurmdb_cluster_accounting_rec_t));
+		total_acct->tres_rec.id = accting->tres_rec.id;
+		list_push(*total_tres_acct, total_acct);
+	}
+
+	total_acct->alloc_secs += accting->alloc_secs;
+	total_acct->down_secs  += accting->down_secs;
+	total_acct->idle_secs  += accting->idle_secs;
+	total_acct->resv_secs  += accting->resv_secs;
+	total_acct->over_secs  += accting->over_secs;
+	total_acct->pdown_secs += accting->pdown_secs;
+	total_acct->tres_rec.count += accting->tres_rec.count;
+	total_acct->tres_rec.rec_count++;
+
+	return SLURM_SUCCESS;
+}
+
+extern void slurmdb_transfer_acct_list_2_tres(
+	List accounting_list, List *tres)
+{
+	ListIterator itr;
+	slurmdb_accounting_rec_t *accting = NULL;
+
+	xassert(accounting_list);
+	xassert(tres);
+
+	/* get the amount of time this assoc used
+	   during the time we are looking at */
+	itr = list_iterator_create(accounting_list);
+	while ((accting = list_next(itr)))
+		slurmdb_add_accounting_to_tres_list(accting, tres);
+	list_iterator_destroy(itr);
+}
+
+extern void slurmdb_transfer_tres_time(
+	List *tres_list_out, char *tres_str, int elapsed)
+{
+	ListIterator itr;
+	slurmdb_tres_rec_t *tres_rec = NULL;
+	List job_tres_list;
+
+	xassert(tres_list_out);
+
+	if (!(job_tres_list = slurmdb_tres_list_from_string(tres_str)))
+		return;
+
+	/* get the amount of time this assoc used
+	   during the time we are looking at */
+	itr = list_iterator_create(job_tres_list);
+	while ((tres_rec = list_next(itr)))
+		slurmdb_add_time_from_count_to_tres_list(
+			tres_rec, tres_list_out, elapsed);
+	list_iterator_destroy(itr);
+	FREE_NULL_LIST(job_tres_list);
 }

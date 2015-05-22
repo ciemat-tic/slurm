@@ -72,6 +72,7 @@
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/power.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_accounting_storage.h"
 #include "src/common/slurm_protocol_api.h"
@@ -124,6 +125,7 @@ static int backfill_interval = BACKFILL_INTERVAL;
 static int backfill_resolution = BACKFILL_RESOLUTION;
 static int backfill_window = BACKFILL_WINDOW;
 static int bf_max_job_array_resv = BF_MAX_JOB_ARRAY_RESV;
+static int bf_min_age_reserve = 0;
 static int max_backfill_job_cnt = 100;
 static int max_backfill_job_per_part = 0;
 static int max_backfill_job_per_user = 0;
@@ -142,6 +144,8 @@ static int  _attempt_backfill(void);
 static void _clear_job_start_times(void);
 static int  _delta_tv(struct timeval *tv);
 static bool _job_is_completing(void);
+static bool _job_part_valid(struct job_record *job_ptr,
+			    struct part_record *part_ptr);
 static void _load_config(void);
 static bool _many_pending_rpcs(void);
 static bool _more_work(time_t last_backfill_time);
@@ -518,6 +522,17 @@ static void _load_config(void)
 		max_backfill_job_per_user = 0;
 	}
 
+	if (sched_params &&
+	    (tmp_ptr=strstr(sched_params, "bf_min_age_reserve=")))
+		bf_min_age_reserve = atoi(tmp_ptr + 19);
+	else
+		bf_min_age_reserve = 0;
+	if (bf_min_age_reserve < 0) {
+		error("Invalid SchedulerParameters bf_min_age_reserve: %d",
+		      bf_min_age_reserve);
+		bf_min_age_reserve = 0;
+	}
+
 	/* bf_continue makes backfill continue where it was if interrupted
 	 */
 	if (sched_params && (strstr(sched_params, "bf_continue"))) {
@@ -683,6 +698,32 @@ static int _yield_locks(int usec)
 		return 1;
 }
 
+/* Test if this job still has access to the specified partition. The job's
+ * available partitions may have changed when locks were released */
+static bool _job_part_valid(struct job_record *job_ptr,
+			    struct part_record *part_ptr)
+{
+	struct part_record *avail_part_ptr;
+	ListIterator part_iterator;
+	bool rc = false;
+
+	if (job_ptr->part_ptr_list) {
+		part_iterator = list_iterator_create(job_ptr->part_ptr_list);
+		while ((avail_part_ptr = (struct part_record *)
+				list_next(part_iterator))) {
+			if (avail_part_ptr == part_ptr) {
+				rc = true;
+				break;
+			}
+		}
+		list_iterator_destroy(part_iterator);
+	} else if (job_ptr->part_ptr == part_ptr) {
+		rc = true;
+	}
+
+	return rc;
+}
+
 static int _attempt_backfill(void)
 {
 	DEF_TIMERS;
@@ -703,7 +744,7 @@ static int _attempt_backfill(void)
 	node_space_map_t *node_space;
 	struct timeval bf_time1, bf_time2;
 	int rc = 0;
-	int job_test_count = 0;
+	int job_test_count = 0, pend_time;
 	uint32_t *uid = NULL, nuser = 0, bf_parts = 0, *bf_part_jobs = NULL;
 	uint16_t *njobs = NULL;
 	bool already_counted;
@@ -725,7 +766,7 @@ static int _attempt_backfill(void)
 	 * Needs to be done with the node-state lock taken.
 	 */
 	START_TIMER;
-	if (select_g_reconfigure()) {
+	if (select_g_update_block(NULL)) {
 		debug4("backfill: not scheduling due to ALPS");
 		return SLURM_SUCCESS;
 	}
@@ -875,6 +916,8 @@ next_task:
 			continue; 	/* scheduled in another partition */
 		if (!avail_front_end(job_ptr))
 			continue;	/* No available frontend for this job */
+		if (!_job_part_valid(job_ptr, part_ptr))
+			continue;	/* Partition change during lock yield */
 		if ((job_ptr->array_task_id != NO_VAL) || job_ptr->array_recs) {
 			if ((reject_array_job_id == job_ptr->array_job_id) &&
 			    (reject_array_part   == part_ptr))
@@ -1278,8 +1321,8 @@ next_task:
 				/* Update the database if job time limit
 				 * changed and move to next job */
 				if (save_time_limit != job_ptr->time_limit)
-					jobacct_storage_g_job_start(acct_db_conn,
-								    job_ptr);
+					jobacct_storage_job_start_direct(
+							acct_db_conn, job_ptr);
 				job_start_cnt++;
 				if (max_backfill_jobs_start &&
 				    (job_start_cnt >= max_backfill_jobs_start)){
@@ -1358,6 +1401,12 @@ next_task:
 			_dump_job_sched(job_ptr, end_reserve, avail_bitmap);
 		if (qos_ptr && (qos_ptr->flags & QOS_FLAG_NO_RESERVE))
 			continue;
+		if (bf_min_age_reserve && job_ptr->details->begin_time) {
+			pend_time = difftime(time(NULL),
+					     job_ptr->details->begin_time);
+			if (pend_time < bf_min_age_reserve)
+				continue;
+		}
 		reject_array_job_id = 0;
 		reject_array_part   = NULL;
 		xfree(job_ptr->sched_nodes);
@@ -1417,6 +1466,7 @@ static int _start_job(struct job_record *job_ptr, bitstr_t *resv_bitmap)
 {
 	int rc;
 	bitstr_t *orig_exc_nodes = NULL;
+	bool is_job_array_head = false;
 	static uint32_t fail_jobid = 0;
 
 	if (job_ptr->details->exc_node_bitmap) {
@@ -1424,8 +1474,21 @@ static int _start_job(struct job_record *job_ptr, bitstr_t *resv_bitmap)
 		bit_or(job_ptr->details->exc_node_bitmap, resv_bitmap);
 	} else
 		job_ptr->details->exc_node_bitmap = bit_copy(resv_bitmap);
-
+	if (job_ptr->array_recs)
+		is_job_array_head = true;
 	rc = select_nodes(job_ptr, false, NULL, NULL);
+	if (is_job_array_head && job_ptr->details) {
+		struct job_record *base_job_ptr;
+		base_job_ptr = find_job_record(job_ptr->array_job_id);
+		if (base_job_ptr && base_job_ptr != job_ptr
+				 && base_job_ptr->array_recs) {
+			FREE_NULL_BITMAP(
+					base_job_ptr->details->exc_node_bitmap);
+			if (orig_exc_nodes)
+				base_job_ptr->details->exc_node_bitmap =
+					bit_copy(orig_exc_nodes);
+		}
+	}
 	if (job_ptr->details) { /* select_nodes() might cancel the job! */
 		FREE_NULL_BITMAP(job_ptr->details->exc_node_bitmap);
 		job_ptr->details->exc_node_bitmap = orig_exc_nodes;
@@ -1442,6 +1505,7 @@ static int _start_job(struct job_record *job_ptr, bitstr_t *resv_bitmap)
 			     job_ptr->array_job_id, job_ptr->array_task_id,
 			     job_ptr->job_id, job_ptr->nodes);
 		}
+		power_g_job_start(job_ptr);
 		if (job_ptr->batch_flag == 0)
 			srun_allocate(job_ptr->job_id);
 		else if ((job_ptr->details == NULL) ||

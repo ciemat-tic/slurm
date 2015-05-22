@@ -2,6 +2,7 @@
  *  job_submit_lua.c - Set defaults in job submit request specifications.
  *****************************************************************************
  *  Copyright (C) 2010 Lawrence Livermore National Security.
+ *  Portions Copyright (C) 2010-2015 SchedMD LLC <http://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -94,14 +95,12 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Job submit lua plugin";
 const char plugin_type[]       	= "job_submit/lua";
-const uint32_t plugin_version   = 110;
-const uint32_t min_plug_version = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 static const char lua_script_path[] = DEFAULT_SCRIPT_DIR "/job_submit.lua";
 static time_t lua_script_last_loaded = (time_t) 0;
@@ -310,14 +309,6 @@ static int _job_rec_field(const struct job_record *job_ptr,
 	return 1;
 }
 
-static int _get_job_rec_field(lua_State *L)
-{
-	const struct job_record *job_ptr = lua_touserdata(L, 1);
-	const char *name = luaL_checkstring(L, 2);
-
-	return _job_rec_field(job_ptr, name);
-}
-
 /* Get fields in an existing slurmctld job_record */
 static int _job_rec_field_index(lua_State *L)
 {
@@ -384,8 +375,6 @@ static int _resv_field(const slurmctld_resv_t *resv_ptr,
 		lua_pushstring(L, resv_ptr->accounts);
 	} else if (!strcmp(name, "assoc_list")) {
 		lua_pushstring(L, resv_ptr->assoc_list);
-	} else if (!strcmp(name, "cpu_cnt")) {
-		lua_pushnumber(L, resv_ptr->cpu_cnt);
 	} else if (!strcmp(name, "duration")) {
 		lua_pushnumber(L, resv_ptr->duration);
 	} else if (!strcmp(name, "end_time")) {
@@ -473,6 +462,119 @@ static void _update_resvs_global(void)
 	lua_pop(L, 1);
 }
 
+/* Set fields in the job request structure on job submit or modify */
+static int _set_job_env_field(lua_State *L)
+{
+	const char *name, *value_str;
+	struct job_descriptor *job_desc;
+	char *name_eq = NULL;
+	int i, j, name_len;
+
+	name = luaL_checkstring(L, 2);
+	name_eq = xstrdup(name);
+	xstrcat(name_eq, "=");
+	name_len = strlen(name_eq);
+	lua_getmetatable(L, -3);
+	lua_getfield(L, -1, "_job_desc");
+	job_desc = lua_touserdata(L, -1);
+	if (job_desc == NULL) {
+		error("%s: job_desc is NULL", __func__);
+	} else {
+		value_str = luaL_checkstring(L, 3);
+		for (i = 0; job_desc->environment[i]; i++) {
+			if (!strncmp(job_desc->environment[i], name_eq,
+				     name_len)) {
+				job_desc->environment[i][name_len] = '\0';
+				xstrcat(job_desc->environment[i], value_str);
+				break;
+			}
+		}
+		if (!job_desc->environment[i]) {
+			job_desc->environment = xrealloc(job_desc->environment,
+							 sizeof(char*) * (i+2));
+			for (j = i; j >= 1; j--) {
+				job_desc->environment[j] =
+					job_desc->environment[j-1];
+			}
+			job_desc->environment[0] = xstrdup(name_eq);
+			xstrcat(job_desc->environment[0], value_str);
+		}
+	}
+	xfree(name_eq);
+
+	return 0;
+}
+
+static int _job_env_field(const struct job_descriptor *job_desc,
+			  const char *name)
+{
+	char *name_eq = "";
+	int i, name_len;
+
+	name_eq = xstrdup(name);
+	xstrcat(name_eq, "=");
+	name_len = strlen(name_eq);
+	if (job_desc == NULL) {
+		error("%s: job_desc is NULL", __func__);
+		lua_pushnil (L);
+	} else if (job_desc->environment == NULL) {
+		error("%s: job_desc->environment is NULL", __func__);
+		lua_pushnil (L);
+	} else {
+		for (i = 0; job_desc->environment[i]; i++) {
+			if (!strncmp(job_desc->environment[i], name_eq,
+				     name_len)) {
+				lua_pushstring (L, job_desc->environment[i] +
+						   name_len);
+				break;
+			}
+		}
+		if (!job_desc->environment[i])
+			lua_pushnil (L);
+	}
+	xfree(name_eq);
+
+	return 1;
+}
+
+/* Get fields in the job request record on job submit or modify */
+static int _get_job_env_field_name(lua_State *L)
+{
+	const struct job_descriptor *job_desc = lua_touserdata(L, 1);
+	const char *name = luaL_checkstring(L, 2);
+	return _job_env_field(job_desc, name);
+}
+
+/* Get fields in an existing slurmctld job_descriptor record */
+static int _job_env_field_index(lua_State *L)
+{
+	const char *name;
+	struct job_descriptor *job_desc;
+
+	name = luaL_checkstring(L, 2);
+	lua_getmetatable(L, -2);
+	lua_getfield(L, -1, "_job_desc");
+	job_desc = lua_touserdata(L, -1);
+	return _job_env_field(job_desc, name);
+}
+
+static void _push_job_env(struct job_descriptor *job_desc)
+{
+	lua_newtable(L);
+
+	lua_newtable(L);
+	lua_pushcfunction(L, _job_env_field_index);
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, _set_job_env_field);
+	lua_setfield(L, -2, "__newindex");
+	/* Store the job descriptor in the metatable, so the index
+	 * function knows which struct it's getting data for.
+	 */
+	lua_pushlightuserdata(L, job_desc);
+	lua_setfield(L, -2, "_job_desc");
+	lua_setmetatable(L, -2);
+}
+
 static int _get_job_req_field(const struct job_descriptor *job_desc,
 			      const char *name)
 {
@@ -491,6 +593,8 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushnumber (L, job_desc->boards_per_node);
 	} else if (!strcmp(name, "burst_buffer")) {
 		lua_pushstring (L, job_desc->burst_buffer);
+	} else if (!strcmp(name, "clusters")) {
+		lua_pushstring (L, job_desc->clusters);
 	} else if (!strcmp(name, "comment")) {
 		lua_pushstring (L, job_desc->comment);
 	} else if (!strcmp(name, "contiguous")) {
@@ -511,6 +615,8 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushstring (L, job_desc->dependency);
 	} else if (!strcmp(name, "end_time")) {
 		lua_pushnumber (L, job_desc->end_time);
+	} else if (!strcmp(name, "environment")) {
+		_push_job_env ((struct job_descriptor *)job_desc); // No const
 	} else if (!strcmp(name, "exc_nodes")) {
 		lua_pushstring (L, job_desc->exc_nodes);
 	} else if (!strcmp(name, "features")) {
@@ -521,6 +627,10 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushnumber (L, job_desc->group_id);
 	} else if (!strcmp(name, "licenses")) {
 		lua_pushstring (L, job_desc->licenses);
+	} else if (!strcmp(name, "mail_type")) {
+		lua_pushnumber (L, job_desc->mail_type);
+	} else if (!strcmp(name, "mail_user")) {
+		lua_pushstring (L, job_desc->mail_user);
 	} else if (!strcmp(name, "max_cpus")) {
 		lua_pushnumber (L, job_desc->max_cpus);
 	} else if (!strcmp(name, "max_nodes")) {
@@ -545,6 +655,8 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushnumber (L, job_desc->num_tasks);
 	} else if (!strcmp(name, "partition")) {
 		lua_pushstring (L, job_desc->partition);
+	} else if (!strcmp(name, "power_flags")) {
+		lua_pushnumber (L, job_desc->power_flags);
 	} else if (!strcmp(name, "pn_min_cpus")) {
 		lua_pushnumber (L, job_desc->pn_min_cpus);
 	} else if (!strcmp(name, "pn_min_memory")) {
@@ -567,6 +679,8 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushstring (L, job_desc->script);
 	} else if (!strcmp(name, "shared")) {
 		lua_pushnumber (L, job_desc->shared);
+	} else if (!strcmp(name, "sicp_mode")) {
+		lua_pushnumber (L, job_desc->sicp_mode);
 	} else if (!strcmp(name, "sockets_per_board")) {
 		lua_pushnumber (L, job_desc->sockets_per_board);
 	} else if (!strcmp(name, "sockets_per_node")) {
@@ -650,6 +764,11 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->burst_buffer);
 		if (strlen(value_str))
 			job_desc->burst_buffer = xstrdup(value_str);
+	} else if (!strcmp(name, "clusters")) {
+		value_str = luaL_checkstring(L, 3);
+		xfree(job_desc->clusters);
+		if (strlen(value_str))
+			job_desc->clusters = xstrdup(value_str);
 	} else if (!strcmp(name, "comment")) {
 		value_str = luaL_checkstring(L, 3);
 		xfree(job_desc->comment);
@@ -720,6 +839,8 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->partition);
 		if (strlen(value_str))
 			job_desc->partition = xstrdup(value_str);
+	} else if (!strcmp(name, "power_flags")) {
+		job_desc->power_flags = luaL_checknumber(L, 3);
 	} else if (!strcmp(name, "pn_min_cpus")) {
 		job_desc->pn_min_cpus = luaL_checknumber(L, 3);
 	} else if (!strcmp(name, "pn_min_memory")) {
@@ -754,6 +875,8 @@ static int _set_job_req_field(lua_State *L)
 			job_desc->script = xstrdup(value_str);
 	} else if (!strcmp(name, "shared")) {
 		job_desc->shared = luaL_checknumber(L, 3);
+	} else if (!strcmp(name, "sicp_mode")) {
+		job_desc->sicp_mode = luaL_checknumber(L, 3);
 	} else if (!strcmp(name, "sockets_per_node")) {
 		job_desc->sockets_per_node = luaL_checknumber(L, 3);
 	} else if (!strcmp(name, "std_err")) {
@@ -798,11 +921,6 @@ static int _set_job_req_field(lua_State *L)
 
 static void _push_job_desc(struct job_descriptor *job_desc)
 {
-#if 0
-	lua_newtable(L);
-	lua_pushlightuserdata(L, job_desc);
-	lua_setfield(L, -2, "job_desc_ptr");
-#else
 	lua_newtable(L);
 
 	lua_newtable(L);
@@ -816,16 +934,10 @@ static void _push_job_desc(struct job_descriptor *job_desc)
 	lua_pushlightuserdata(L, job_desc);
 	lua_setfield(L, -2, "_job_desc");
 	lua_setmetatable(L, -2);
-#endif
 }
 
 static void _push_job_rec(struct job_record *job_ptr)
 {
-#if 0
-	lua_newtable(L);
-	lua_pushlightuserdata(L, job_ptr);
-	lua_setfield(L, -2, "job_rec_ptr");
-#else
 	lua_newtable(L);
 
 	lua_newtable(L);
@@ -837,7 +949,6 @@ static void _push_job_rec(struct job_record *job_ptr)
 	lua_pushlightuserdata(L, job_ptr);
 	lua_setfield(L, -2, "_job_rec_ptr");
 	lua_setmetatable(L, -2);
-#endif
 }
 
 /* Get fields in an existing slurmctld partition record
@@ -904,11 +1015,6 @@ static int _part_rec_field_index(lua_State *L)
 
 	return _part_rec_field(part_ptr, name);
 }
-#if 0
-/* Filter before packing list of partitions */
-	char *allow_groups;	/* comma delimited list of groups */
-	uid_t *allow_uids;	/* zero terminated list of allowed users */
-#endif
 
 static bool _user_can_use_part(uint32_t user_id, uint32_t submit_uid,
 			       struct part_record *part_ptr)
@@ -944,10 +1050,7 @@ static void _push_partition_list(uint32_t user_id, uint32_t submit_uid)
 	while ((part_ptr = (struct part_record *) list_next(part_iterator))) {
 		if (!_user_can_use_part(user_id, submit_uid, part_ptr))
 			continue;
-#if 0
-		lua_pushlightuserdata(L, part_ptr);
-		lua_rawseti(L, -2, i++);
-#else
+
 		/* Create an empty table, with a metatable that looks up the
 		 * data for the partition.
 		 */
@@ -965,7 +1068,6 @@ static void _push_partition_list(uint32_t user_id, uint32_t submit_uid)
 
 		lua_setfield(L, -2, part_ptr->name);
 	}
-#endif
 	list_iterator_destroy(part_iterator);
 }
 
@@ -1022,9 +1124,11 @@ static void _register_lua_slurm_output_functions (void)
 	lua_pushnumber (L, MAIL_JOB_END);
 	lua_setfield (L, -2, "MAIL_JOB_END");
 	lua_pushnumber (L, MAIL_JOB_FAIL);
-	lua_setfield (L, -2, "MAIL_FAIL");
+	lua_setfield (L, -2, "MAIL_JOB_FAIL");
 	lua_pushnumber (L, MAIL_JOB_REQUEUE);
 	lua_setfield (L, -2, "MAIL_JOB_REQUEUE");
+	lua_pushnumber (L, MAIL_JOB_STAGE_OUT);
+	lua_setfield (L, -2, "MAIL_JOB_STAGE_OUT");
 	lua_pushnumber (L, MEM_PER_CPU);
 	lua_setfield (L, -2, "MEM_PER_CPU");
 	lua_pushnumber (L, NICE_OFFSET);
@@ -1042,10 +1146,12 @@ static void _register_lua_slurm_output_functions (void)
 
 static void _register_lua_slurm_struct_functions (void)
 {
-	lua_pushcfunction(L, _get_job_rec_field);
-	lua_setglobal(L, "_get_job_rec_field");
+	lua_pushcfunction(L, _get_job_env_field_name);
+	lua_setglobal(L, "_get_job_env_field_name");
 	lua_pushcfunction(L, _get_job_req_field_name);
 	lua_setglobal(L, "_get_job_req_field_name");
+	lua_pushcfunction(L, _set_job_env_field);
+	lua_setglobal(L, "_set_job_env_field");
 	lua_pushcfunction(L, _set_job_req_field);
 	lua_setglobal(L, "_set_job_req_field");
 	lua_pushcfunction(L, _get_part_rec_field);
@@ -1211,6 +1317,9 @@ int init(void)
 	 *   by any lua scripts.
 	 */
 	if (!dlopen("liblua.so",       RTLD_NOW | RTLD_GLOBAL) &&
+	    !dlopen("liblua-5.2.so",   RTLD_NOW | RTLD_GLOBAL) &&
+	    !dlopen("liblua5.2.so",    RTLD_NOW | RTLD_GLOBAL) &&
+	    !dlopen("liblua5.2.so.0",  RTLD_NOW | RTLD_GLOBAL) &&
 	    !dlopen("liblua-5.1.so",   RTLD_NOW | RTLD_GLOBAL) &&
 	    !dlopen("liblua5.1.so",    RTLD_NOW | RTLD_GLOBAL) &&
 	    !dlopen("liblua5.1.so.0",  RTLD_NOW | RTLD_GLOBAL)) {

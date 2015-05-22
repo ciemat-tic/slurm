@@ -1,4 +1,4 @@
-.TH SCONTROL "1" "January 2015" "scontrol 15.08" "Slurm components"
+.TH scontrol "1" "Slurm Commands" "April 2015" "Slurm Commands"
 
 .SH "NAME"
 scontrol \- Used view and modify Slurm configuration and state.
@@ -481,9 +481,8 @@ Value may be cleared with blank data value, "BurstBuffer=".
 Format is burst buffer plugin specific.
 .TP
 \fIConn\-Type\fP=<type>
-Reset the node connection type.
-Possible values on Blue Gene are "MESH", "TORUS" and "NAV"
-(mesh else torus).
+Reset the node connection type. Supported only on IBM BlueGene systems.
+Possible values on are "MESH", "TORUS" and "NAV" (mesh else torus).
 .TP
 \fIContiguous\fP=<yes|no>
 Set the job's requirement for contiguous (consecutive) nodes to be allocated.
@@ -585,17 +584,14 @@ of the cluster) as described in salloc/sbatch/srun man pages.
 .TP
 \fIMinCPUsNode\fP=<count>
 Set the job's minimum number of CPUs per node to the specified value.
-Only the Slurm administrator or root can change this parameter.
 .TP
 \fIMinMemoryCPU\fP=<megabytes>
 Set the job's minimum real memory required per allocated CPU to the specified
-value. Only the Slurm administrator or root can change this parameter.
-Either \fIMinMemoryCPU\fP or \fIMinMemoryNode\fP may be set, but not both.
+value. Either \fIMinMemoryCPU\fP or \fIMinMemoryNode\fP may be set, but not both.
 .TP
 \fIMinMemoryNode\fP=<megabytes>
 Set the job's minimum real memory required per node to the specified value.
 Either \fIMinMemoryCPU\fP or \fIMinMemoryNode\fP may be set, but not both.
-Only the Slurm administrator or root can change this parameter.
 .TP
 \fIMinTmpDiskNode\fP=<megabytes>
 Set the job's minimum temporary disk space required per node to the specified value.
@@ -656,19 +652,10 @@ Only the Slurm administrator or root can increase job's priority.
 Set the job's QOS (Quality Of Service) to the specified value.
 Value may be cleared with blank data value, "QOS=".
 .TP
-\fIReqCores\fP=<count>
-Set the job's count of cores per socket to the specified value.
-.TP
 \fIReqNodeList\fP=<nodes>
 Set the job's list of required node. Multiple node names may be specified using
 simple node range expressions (e.g. "lx[10\-20]").
 Value may be cleared with blank data value, "ReqNodeList=".
-.TP
-\fIReqSockets\fP=<count>
-Set the job's count of sockets per node to the specified value.
-.TP
-\fIReqThreads\fP=<count>
-Set the job's count of threads per core to the specified value.
 .TP
 \fIRequeue\fP=<0|1>
 Stipulates whether a job should be requeued after a node failure: 0
@@ -770,6 +757,11 @@ Local node and system id making the resource allocation.
 Jobs submitted using the sbatch command have BatchFlag set to 1.
 Jobs submitted using other commands have BatchFlag set to 0.
 .TP
+\fICoreSpec\fP=<count>
+Number of cores to reserve per node for system use.
+The job will be charged for these cores, but be unable to use them.
+Will be reported as "*" if not constrained.
+.TP
 \fIEndTime\fP
 The time the job is expected to terminate based on the job's time
 limit.  When the job ends sooner, this field will be updated with the
@@ -781,6 +773,9 @@ The first number is the exit code, typically as set by the exit() function.
 The second number of the signal that caused the process to terminate if
 it was terminated by a signal.
 .TP
+\fIGroupId\fP
+The group under which the job was submitted.
+.TP
 \fIJobState\fP
 The current state of the job.
 .TP
@@ -790,6 +785,12 @@ The list of nodes allocated to the job.
 \fINodeListIndices\fP
 The NodeIndices expose the internal indices into the node table
 associated with the node(s) allocated to the job.
+.TP
+\fINtasksPerN:B:S:C\fP=
+<tasks_per_node>:<tasks_per_baseboard>:<tasks_per_socket>:<tasks_per_core>
+Specifies the number of tasks to be started per hardware component (node,
+baseboard, socket and core).
+Unconstrained values may be shown as "0" or "*".
 .TP
 \fIPreemptTime\fP
 Time at which job was signaled that it was selected for preemption.
@@ -801,6 +802,18 @@ Time the job ran prior to last suspend.
 .TP
 \fIReason\fP
 The reason job is not running: e.g., waiting "Resources".
+.TP
+\fIReqB:S:C:T\fP=
+<baseboard_count>:<socket_per_baseboard_count>:<core_per_socket_count>:<thread_per_core_count>
+Specifies the count of various hardware components requested by the job.
+Unconstrained values may be shown as "0" or "*".
+.TP
+\fISecsPreSuspend\fP=<seconds>
+If the job is suspended, this is the run time accumulated by the job
+(in seconds) prior to being suspended.
+.TP
+\fISocks/Node\fP=<count>
+Count of desired sockets per node
 .TP
 \fISubmitTime\fP
 The time  and  date stamp (in Universal Time Coordinated, UTC)
@@ -816,8 +829,8 @@ duplicate entries for a job.
 \fISuspendTime\fP
 Time the job was last suspended or resumed.
 .TP
-\fIUserId\fP  \fIGroupId\fP
-The user and group under which the job was submitted.
+\fIUserId\fP
+The user under which the job was submitted.
 .TP
 NOTE on information displayed for various job states:
 When you submit a request for the "show job" function the scontrol
@@ -934,10 +947,12 @@ Use quotes to enclose a reason having more than one word.
 
 .TP
 \fIState\fP=<state>
-Identify the state to be assigned to the node. Possible values are  "NoResp",
+Identify the state to be assigned to the node. Possible node states are "NoResp",
 "ALLOC", "ALLOCATED", "COMPLETING", "DOWN", "DRAIN", "ERROR, "FAIL", "FAILING",
 "FUTURE" "IDLE", "MAINT", "MIXED", "PERFCTRS/NPC", "RESERVED", "POWER_DOWN",
-"POWER_UP", "RESUME" or "UNDRAIN".
+"POWER_UP", "RESUME" or "UNDRAIN". Not all of those states can be set using
+the scontrol command only the following can: "NoResp", "DRAIN", "FAIL",
+"FUTURE", "RESUME", "POWER_DOWN", "POWER_UP" and "UNDRAIN".
 If a node is in a "MIXED" state it usually means the node is in
 multiple states.  For instance if only part of the node is "ALLOCATED"
 and the rest of the node is "IDLE" the state will be "MIXED".
@@ -1241,7 +1256,7 @@ but may use these reserved resources plus any which are generally available.
 
 .TP
 \fICoreCnt\fP=<num>
-This option is only suported when SelectType=select/cons_res. Identify number of
+This option is only supported when SelectType=select/cons_res. Identify number of
 cores to be reserved. If NodeCnt is used, this is the total number of cores to
 reserve where cores per node is CoreCnt/NodeCnt. If a nodelist is used, this
 should be an array of core numbers by node: Nodes=node[1\-5] CoreCnt=2,2,3,3,4
@@ -1457,6 +1472,42 @@ NOTE: Even on BGQ where node names are given in bg0000[00000] format
 this option takes an ionode name bg0000[0].
 
 .TP
+\fBSPECIFICATIONS FOR UPDATE COMMAND, LAYOUTS \fR
+.TP
+\fILayout\fP=<name>
+Identify the layout to be updated. This specification is required.
+.TP
+\fIEntity\fP=<entity list>
+Identify the entities to be updated. This specification is required.
+.TP
+\fIKey\fP=<value>
+Keys/Values to update for the entities. The format must respect the layout.d
+configuration files. Key=Type cannot be updated. At least one Key/Value is
+required, several can be set.
+
+.TP
+\fBSPECIFICATIONS FOR SHOW COMMAND, LAYOUTS\fR
+.PP
+Without options, lists all configured layouts. With a layout specified,
+shows entities with following options:
+
+.TP
+\fIKey\fP=<value>
+Keys/Values to update for the entities. The format must respect the layout.d
+configuration files. Key=Type cannot be updated. One Key/Value is required,
+several can be set.
+.TP
+\fIEntity\fP=<value>
+Entities to show, default is not used. Can be set to "*".
+.TP
+\fIType\fP=<value>
+Type of entities to show, default is not used.
+.TP
+\fInolayout\fP
+If not used, only entities with defining the tree are shown.
+With the option, only leaves are shown.
+
+.TP
 \fBDESCRIPTION FOR SHOW COMMAND, NODES\fR
 .TP
 The meaning of the energy information is as follows:
@@ -1514,8 +1565,8 @@ exclusive use by the Slurm compute node daemons (slurmd, slurmstepd).
 
 .TP
 \fIMemSpecLimit\fP
-The combined memory limit, in megabytes, on this node for the Slurm compute 
-node daemons (slurmd, slurmstepd). 
+The combined memory limit, in megabytes, on this node for the Slurm compute
+node daemons (slurmd, slurmstepd).
 
 
 .SH "ENVIRONMENT VARIABLES"

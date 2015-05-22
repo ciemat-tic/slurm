@@ -47,16 +47,17 @@
 #include <sys/types.h>
 #include <pwd.h>
 
+#include "src/common/env.h"
+#include "src/common/fd.h"
+#include "src/common/forward.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
-#include "src/common/forward.h"
-#include "src/common/env.h"
-#include "src/common/fd.h"
 
 #include "allocate.h"
 #include "opt.h"
@@ -181,7 +182,7 @@ static void _timeout_handler(srun_timeout_msg_t *msg)
 	if (msg->timeout != last_timeout) {
 		last_timeout = msg->timeout;
 		verbose("job time limit to be reached at %s",
-			slurm_ctime(&msg->timeout));
+			slurm_ctime2(&msg->timeout));
 	}
 }
 
@@ -366,13 +367,13 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 
 	for (i = 0; cur_delay < max_delay; i++) {
 		if (i) {
-			cur_sleep= POLL_SLEEP * i;
+			cur_sleep = POLL_SLEEP * i;
 			if (i == 1) {
-				verbose("Waiting for nodes to boot "
-					"max_delay = %d", max_delay);
+				verbose("Waiting for nodes to boot (delay looping %d times @ %f secs x index)",
+					max_delay, POLL_SLEEP);
 			} else {
-				debug("Waited %f sec and still waiting: next "
-				      "sleep for %f sec", cur_delay, cur_sleep);
+				debug("Waited %f sec and still waiting: next sleep for %f sec",
+				      cur_delay, cur_sleep);
 			}
 			usleep(1000000 * cur_sleep);
 			cur_delay += cur_sleep;
@@ -829,7 +830,8 @@ job_desc_msg_create_from_opts (void)
 		j->time_limit          = opt.time_limit;
 	if (opt.time_min != NO_VAL)
 		j->time_min            = opt.time_min;
-	j->shared = opt.shared;
+	if (opt.shared != (uint16_t) NO_VAL)
+		j->shared = opt.shared;
 
 	if (opt.warn_signal)
 		j->warn_signal = opt.warn_signal;
@@ -857,6 +859,11 @@ job_desc_msg_create_from_opts (void)
 		j->spank_job_env      = opt.spank_job_env;
 		j->spank_job_env_size = opt.spank_job_env_size;
 	}
+
+	if (opt.power_flags)
+		j->power_flags = opt.power_flags;
+	if (opt.sicp_mode)
+		j->sicp_mode = opt.sicp_mode;
 
 	return j;
 }

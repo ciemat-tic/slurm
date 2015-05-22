@@ -70,11 +70,54 @@ static void _job_power_del(void *x)
 	xfree(x);
 }
 
+/* For all nodes in a cluster
+ * 1) set default values and
+ * 2) return global power allocation/consumption information */
+extern void get_cluster_power(struct node_record *node_record_table_ptr,
+			      int node_record_count,
+			      uint32_t *alloc_watts, uint32_t *used_watts)
+{
+	uint64_t debug_flag = slurm_get_debug_flags();
+	int i;
+	struct node_record *node_ptr;
+
+	*alloc_watts = 0;
+	*used_watts  = 0;
+	if ((debug_flag & DEBUG_FLAG_POWER) == 0)
+		return;
+
+	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
+	     i++, node_ptr++) {
+		if (node_ptr->power) {
+			if (!node_ptr->power->cap_watts) {	/* No limit */
+				if (!node_ptr->power->max_watts)
+					continue;	/* No node data */
+				node_ptr->power->cap_watts =
+					node_ptr->power->max_watts;
+			}
+			if (!node_ptr->power->current_watts) { /* No data yet */
+				if (node_ptr->energy &&
+				    node_ptr->energy->current_watts) {
+					node_ptr->power->current_watts +=
+						node_ptr->energy->current_watts;
+				} else {
+					node_ptr->power->current_watts =
+						node_ptr->power->cap_watts;
+				}
+			}
+			*alloc_watts += node_ptr->power->cap_watts;
+			*used_watts += node_ptr->power->current_watts;
+		}	
+	}
+}
+
 /* For each running job, return power allocation/use information in a List
  * containing elements of type power_by_job_t.
  * NOTE: Job data structure must be locked on function entry
- * NOTE: Call list_delete() to free return value */
-extern List get_job_power(List job_list)
+ * NOTE: Call list_delete() to free return value
+ * NOTE: This function is currently unused. */
+extern List get_job_power(List job_list,
+			  struct node_record *node_record_table_ptr)
 {
 	struct node_record *node_ptr;
 	struct job_record *job_ptr;
@@ -84,14 +127,15 @@ extern List get_job_power(List job_list)
 	int i, i_first, i_last;
 	uint64_t debug_flag = slurm_get_debug_flags();
 	List job_power_list = list_create(_job_power_del);
+	time_t now = time(NULL);
 
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-//FIXME: What about IS_JOB_SUSPENDED(job_ptr)?
 		if (!IS_JOB_RUNNING(job_ptr))
 			continue;
 		power_ptr = xmalloc(sizeof(power_by_job_t));
 		power_ptr->job_id = job_ptr->job_id;
+		power_ptr->start_time = job_ptr->start_time;
 		list_append(job_power_list, power_ptr);
 		if (!job_ptr->node_bitmap) {
 			error("%s: %s node_bitmap is NULL", __func__,
@@ -116,8 +160,10 @@ extern List get_job_power(List job_list)
 			}
 		}
 		if (debug_flag & DEBUG_FLAG_POWER) {
-			info("%s: %s AllocWatts=%u UsedWatts=%u", __func__,
+			info("%s: %s Age=%ld(sec) AllocWatts=%u UsedWatts=%u",
+			     __func__,
 			     jobid2fmt(job_ptr, jobid_buf, sizeof(jobid_buf)),
+			     (long int) difftime(now, power_ptr->start_time),
 			     power_ptr->alloc_watts, power_ptr->used_watts);
 		}
 	}
@@ -132,21 +178,63 @@ extern List get_job_power(List job_list)
  * script_args IN - Arguments to the script
  * max_wait IN - Maximum time to wait in milliseconds,
  *		 -1 for no limit (asynchronous)
+ * data_in IN - data to use as program STDIN (NULL if not STDIN)
  * status OUT - Job exit code
  * Return stdout+stderr of spawned program, value must be xfreed. */
 extern char *power_run_script(char *script_name, char *script_path,
-			      char **script_argv, int max_wait, int *status)
+			      char **script_argv, int max_wait, char *data_in,
+			      int *status)
 {
 	int i, new_wait, resp_size = 0, resp_offset = 0;
+	int send_size = 0, send_offset = 0;
 	pid_t cpid;
 	char *resp = NULL;
-	int pfd[2] = { -1, -1 };
+	int fd_stdout[2] = { -1, -1 };
+	int fd_stdin[2] = { -1, -1 };
 
 	if ((script_path == NULL) || (script_path[0] == '\0')) {
 		error("%s: no script specified", __func__);
 		*status = 127;
 		resp = xstrdup("Slurm burst buffer configuration error");
 		return resp;
+	}
+	if (slurm_get_debug_flags() & DEBUG_FLAG_POWER) {
+		for (i = 0; i < 10; i++) {
+			if (!script_argv[i])
+				break;
+		}
+		if (i == 0) {
+			info("%s:", __func__);
+		} else if (i == 1) {
+			info("%s: %s", __func__, script_name);
+		} else if (i == 2) {
+			info("%s: %s %s", __func__, script_name,
+			     script_argv[1]);
+		} else if (i == 3) {
+			info("%s: %s %s %s", __func__, script_name,
+			     script_argv[1], script_argv[2]);
+		} else if (i == 4) {
+			info("%s: %s %s %s %s", __func__, script_name,
+			     script_argv[1], script_argv[2], script_argv[3]);
+		} else if (i == 5) {
+			info("%s: %s %s %s %s %s", __func__, script_name,
+			     script_argv[1], script_argv[2], script_argv[3],
+			     script_argv[4]);
+		} else if (i == 6) {
+			info("%s: %s %s %s %s %s %s", __func__, script_name,
+			     script_argv[1], script_argv[2], script_argv[3],
+			     script_argv[4], script_argv[5]);
+		} else if (i == 7) {
+			info("%s: %s %s %s %s %s %s %s", __func__,
+			     script_name, script_argv[1], script_argv[2],
+			     script_argv[3], script_argv[4], script_argv[5],
+			     script_argv[6]);
+		} else {	/* 8 or more args here, truncate as needed */
+			info("%s: %s %s %s %s %s %s %s %s", __func__,
+			     script_name, script_argv[1], script_argv[2],
+			     script_argv[3], script_argv[4], script_argv[5],
+			     script_argv[6], script_argv[7]);
+		}
 	}
 	if (script_path[0] != '/') {
 		error("%s: %s is not fully qualified pathname (%s)",
@@ -162,8 +250,16 @@ extern char *power_run_script(char *script_name, char *script_path,
 		resp = xstrdup("Slurm burst buffer configuration error");
 		return resp;
 	}
+	if (data_in) {
+		if (pipe(fd_stdin) != 0) {
+			error("%s: pipe(): %m", __func__);
+			*status = 127;
+			resp = xstrdup("System error");
+			return resp;
+		}
+	}
 	if (max_wait != -1) {
-		if (pipe(pfd) != 0) {
+		if (pipe(fd_stdout) != 0) {
 			error("%s: pipe(): %m", __func__);
 			*status = 127;
 			resp = xstrdup("System error");
@@ -174,17 +270,22 @@ extern char *power_run_script(char *script_name, char *script_path,
 		int cc;
 
 		cc = sysconf(_SC_OPEN_MAX);
+		if (data_in)
+			dup2(fd_stdin[0], STDIN_FILENO);
 		if (max_wait != -1) {
-			dup2(pfd[1], STDERR_FILENO);
-			dup2(pfd[1], STDOUT_FILENO);
+			dup2(fd_stdout[1], STDERR_FILENO);
+			dup2(fd_stdout[1], STDOUT_FILENO);
 			for (i = 0; i < cc; i++) {
 				if ((i != STDERR_FILENO) &&
+				    (i != STDIN_FILENO)  &&
 				    (i != STDOUT_FILENO))
 					close(i);
 			}
 		} else {
-			for (i = 0; i < cc; i++)
-				close(i);
+			for (i = 0; i < cc; i++) {
+				if (!data_in || (i != STDERR_FILENO))
+					close(i);
+			}
 			if ((cpid = fork()) < 0)
 				exit(127);
 			else if (cpid > 0)
@@ -199,19 +300,43 @@ extern char *power_run_script(char *script_name, char *script_path,
 		error("%s: execv(%s): %m", __func__, script_path);
 		exit(127);
 	} else if (cpid < 0) {
+		if (data_in) {
+			close(fd_stdin[0]);
+			close(fd_stdin[1]);
+		}
 		if (max_wait != -1) {
-			close(pfd[0]);
-			close(pfd[1]);
+			close(fd_stdout[0]);
+			close(fd_stdout[1]);
 		}
 		error("%s: fork(): %m", __func__);
 	} else if (max_wait != -1) {
 		struct pollfd fds;
 		time_t start_time = time(NULL);
+		if (data_in) {
+			close(fd_stdin[0]);
+			send_size = strlen(data_in);
+			while (send_size > send_offset) {
+				i = write(fd_stdin[1], data_in + send_offset,
+					 send_size - send_offset);
+				if (i == 0) {
+					break;
+				} else if (i < 0) {
+					if (errno == EAGAIN)
+						continue;
+					error("%s: write(%s): %m", __func__,
+					      script_path);
+					break;
+				} else {
+					send_offset += i;
+				}
+			}
+			close(fd_stdin[1]);
+		}
 		resp_size = 1024;
 		resp = xmalloc(resp_size);
-		close(pfd[1]);
+		close(fd_stdout[1]);
 		while (1) {
-			fds.fd = pfd[0];
+			fds.fd = fd_stdout[0];
 			fds.events = POLLIN | POLLHUP | POLLRDHUP;
 			fds.revents = 0;
 			if (max_wait <= 0) {
@@ -233,7 +358,7 @@ extern char *power_run_script(char *script_name, char *script_path,
 			}
 			if ((fds.revents & POLLIN) == 0)
 				break;
-			i = read(pfd[0], resp + resp_offset,
+			i = read(fd_stdout[0], resp + resp_offset,
 				 resp_size - resp_offset);
 			if (i == 0) {
 				break;
@@ -253,10 +378,37 @@ extern char *power_run_script(char *script_name, char *script_path,
 		}
 		killpg(cpid, SIGKILL);
 		waitpid(cpid, status, 0);
-		close(pfd[0]);
+		close(fd_stdout[0]);
 	} else {
 		waitpid(cpid, status, 0);
 	}
 	return resp;
 }
 
+/* For a newly starting job, set "new_job_time" in each of it's nodes
+ * NOTE: The job and node data structures must be locked on function entry */
+extern void set_node_new_job(struct job_record *job_ptr,
+			     struct node_record *node_record_table_ptr)
+{
+	int i, i_first, i_last;
+	struct node_record *node_ptr;
+	time_t now = time(NULL);
+
+	if (!job_ptr || !job_ptr->node_bitmap) {
+		error("%s: job_ptr node_bitmap is NULL", __func__);
+		return;
+	}
+
+	i_first = bit_ffs(job_ptr->node_bitmap);
+	if (i_first >= 0)
+		i_last = bit_fls(job_ptr->node_bitmap);
+	else
+		i_last = i_first - 1;
+	for (i = i_first; i <= i_last; i++) {
+		if (!bit_test(job_ptr->node_bitmap, i))
+			continue;
+		node_ptr = node_record_table_ptr + i;
+		if (node_ptr->power)
+			node_ptr->power->new_job_time = now;
+	}
+}

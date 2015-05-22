@@ -3,6 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
+ *  Copyright (C) 2010-2015 SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <grondona1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -151,14 +152,11 @@ int initialize_and_process_args(int argc, char *argv[])
 
 }
 
-/* has_default_opt()
- *
- * No getopt() options were specified, only the
+/*
+ * No job filtering options were specified (e.g. by user or state), only the
  * job ids is on the command line.
- *
  */
-bool
-has_default_opt(void)
+extern bool has_default_opt(void)
 {
 	if (opt.account == NULL
 	    && opt.batch == false
@@ -167,13 +165,25 @@ has_default_opt(void)
 	    && opt.partition == NULL
 	    && opt.qos == NULL
 	    && opt.reservation == NULL
-	    && opt.signal == (uint16_t) - 1
+	    && opt.signal == (uint16_t) NO_VAL
 	    && opt.state == JOB_END
 	    && opt.user_id == 0
 	    && opt.user_name == NULL
 	    && opt.wckey == NULL
 	    && opt.nodelist == NULL) {
 		return true;
+	}
+	return false;
+}
+
+/* Return true if any job step specification given */
+extern bool has_job_steps(void)
+{
+	int i;
+
+	for (i = 0; i < opt.job_cnt; i++) {
+		if (opt.step_id[i] != SLURM_BATCH_SCRIPT)
+			return true;
 	}
 	return false;
 }
@@ -256,7 +266,7 @@ static void _opt_default(void)
 	opt.partition	= NULL;
 	opt.qos		= NULL;
 	opt.reservation	= NULL;
-	opt.signal	= (uint16_t)-1; /* no signal specified */
+	opt.signal	= (uint16_t) NO_VAL;
 	opt.state	= JOB_END;
 	opt.user_id	= 0;
 	opt.user_name	= NULL;
@@ -378,8 +388,8 @@ static void _opt_args(int argc, char **argv)
 		{NULL,          0,                 0, 0}
 	};
 
-	while((opt_char = getopt_long(argc, argv, "A:biM:n:p:Qq:R:s:t:u:vVw:",
-				      long_options, &option_index)) != -1) {
+	while ((opt_char = getopt_long(argc, argv, "A:biM:n:p:Qq:R:s:t:u:vVw:",
+				       long_options, &option_index)) != -1) {
 		switch (opt_char) {
 		case (int)'?':
 			fprintf(stderr,
@@ -519,7 +529,10 @@ _xlate_job_step_ids(char **rest)
 			hostlist_destroy(hl);
 			end_char[1] = save_char;
 			/* No step ID support for job array range */
-			break;
+			continue;
+		} else if ((next_str[0] == '_') && (next_str[1] == '*')) {
+			opt.array_id[buf_offset] = INFINITE;
+			next_str += 2;
 		} else if (next_str[0] == '_') {
 			tmp_l = strtol(&next_str[1], &next_str, 10);
 			if (tmp_l < 0) {
@@ -600,15 +613,39 @@ static void _opt_list(void)
 	info("partition      : %s", opt.partition);
 	info("qos            : %s", opt.qos);
 	info("reservation    : %s", opt.reservation);
-	info("signal         : %u", opt.signal);
+	if (opt.signal != (uint16_t) NO_VAL)
+		info("signal         : %u", opt.signal);
 	info("state          : %s", job_state_string(opt.state));
 	info("user_id        : %u", opt.user_id);
 	info("user_name      : %s", opt.user_name);
 	info("verbose        : %d", opt.verbose);
 	info("wckey          : %s", opt.wckey);
 
-	for (i=0; i<opt.job_cnt; i++) {
-		info("job_steps      : %u.%u ", opt.job_id[i], opt.step_id[i]);
+	for (i = 0; i < opt.job_cnt; i++) {
+		if (opt.step_id[i] == SLURM_BATCH_SCRIPT) {
+			if (opt.array_id[i] == NO_VAL) {
+				info("job_id[%d]      : %u",
+				     i, opt.job_id[i]);
+			} else if (opt.array_id[i] == INFINITE) {
+				info("job_id[%d]      : %u_*",
+				     i, opt.job_id[i]);
+			} else {
+				info("job_id[%d]      : %u_%u",
+				     i, opt.job_id[i], opt.array_id[i]);
+			}
+		} else {
+			if (opt.array_id[i] == NO_VAL) {
+				info("job_step_id[%d] : %u.%u",
+				     i, opt.job_id[i], opt.step_id[i]);
+			} else if (opt.array_id[i] == INFINITE) {
+				info("job_step_id[%d] : %u_*.%u",
+				     i, opt.job_id[i], opt.step_id[i]);
+			} else {
+				info("job_step_id[%d] : %u_%u.%u",
+				     i, opt.job_id[i], opt.array_id[i],
+				     opt.step_id[i]);
+			}
+		}
 	}
 }
 

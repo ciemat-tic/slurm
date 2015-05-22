@@ -47,7 +47,7 @@ static void _cpuset_to_cpustr(const cpu_set_t *mask, char *str)
 	char tmp[16];
 
 	str[0] = '\0';
-	for (i=0; i<CPU_SETSIZE; i++) {
+	for (i = 0; i < CPU_SETSIZE; i++) {
 		if (!CPU_ISSET(i, mask))
 			continue;
 		snprintf(tmp, sizeof(tmp), "%d", i);
@@ -57,17 +57,41 @@ static void _cpuset_to_cpustr(const cpu_set_t *mask, char *str)
 	}
 }
 
+static void _cpuset_to_memsstr(const cpu_set_t *mask, char *str,
+			       int cpu_cnt, int mem_cnt)
+{
+	int cpu_per_mem, i, n, nlast = -1;
+	char tmp[16];
+
+	/* Count of CPUs per memory locality */
+	cpu_per_mem = (cpu_cnt + mem_cnt - 1) / mem_cnt;
+
+	str[0] = '\0';
+	for (i = 0; i < CPU_SETSIZE; i++) {
+		if (!CPU_ISSET(i, mask))
+			continue;
+		n = i / cpu_per_mem;
+		if (nlast != n) {
+			snprintf(tmp, sizeof(tmp), "%d", n);
+			nlast = n;
+			if (str[0])
+				strcat(str, ",");
+			strcat(str, tmp);
+		}
+	}
+}
+
 int	slurm_build_cpuset(char *base, char *path, uid_t uid, gid_t gid)
 {
 	char file_path[PATH_MAX], mstr[16];
 	int fd, rc;
 
 	if (mkdir(path, 0700) && (errno != EEXIST)) {
-		error("mkdir(%s): %m", path);
+		error("%s: mkdir(%s): %m", __func__, path);
 		return SLURM_ERROR;
 	}
 	if (chown(path, uid, gid))
-		error("chown(%s): %m", path);
+		error("%s: chown(%s): %m", __func__, path);
 
 	/* Copy "cpus" contents from parent directory
 	 * "cpus" must be set before any tasks can be added. */
@@ -84,7 +108,7 @@ int	slurm_build_cpuset(char *base, char *path, uid_t uid, gid_t gid)
 			fd = open(file_path, O_RDONLY);
 			if (fd < 0) {
 				cpuset_prefix = "";
-				error("open(%s): %m", file_path);
+				error("%s: open(%s): %m", __func__, file_path);
 				return SLURM_ERROR;
 			}
 		} else {
@@ -95,14 +119,14 @@ int	slurm_build_cpuset(char *base, char *path, uid_t uid, gid_t gid)
 	rc = read(fd, mstr, sizeof(mstr));
 	close(fd);
 	if (rc < 1) {
-		error("read(%s): %m", file_path);
+		error("%s: read(%s): %m", __func__, file_path);
 		return SLURM_ERROR;
 	}
 	snprintf(file_path, sizeof(file_path), "%s/%scpus",
 		 path, cpuset_prefix);
 	fd = open(file_path, O_CREAT | O_WRONLY, 0700);
 	if (fd < 0) {
-		error("open(%s): %m", file_path);
+		error("%s: open(%s): %m", __func__, file_path);
 		return SLURM_ERROR;
 	}
 	rc = write(fd, mstr, rc);
@@ -166,12 +190,24 @@ int	slurm_set_cpuset(char *base, char *path, pid_t pid, size_t size,
 			 const cpu_set_t *mask)
 {
 	int fd, rc;
+	int cpu_cnt = 0, mem_cnt = 0;
 	char file_path[PATH_MAX];
 	char mstr[1 + CPU_SETSIZE * 4];
 
 	if (mkdir(path, 0700) && (errno != EEXIST)) {
-		error("mkdir(%s): %m", path);
+		error("%s: mkdir(%s): %m", __func__, path);
 		return SLURM_ERROR;
+	}
+
+	/* Read "cpus" contents from parent directory for CPU count */
+	snprintf(file_path, sizeof(file_path), "%s/%scpus",
+		 base, cpuset_prefix);
+	fd = open(file_path, O_RDONLY);
+	if (fd >= 0) {
+		rc = read(fd, mstr, sizeof(mstr));
+		close(fd);
+		if (rc > 0)
+			cpu_cnt = str_to_cnt(mstr);
 	}
 
 	/* Set "cpus" per user request */
@@ -204,6 +240,10 @@ int	slurm_set_cpuset(char *base, char *path, pid_t pid, size_t size,
 			error("read(%s): %m", file_path);
 			return SLURM_ERROR;
 		}
+		if (rc > 0)
+			mem_cnt = str_to_cnt(mstr);
+		if ((cpu_cnt > 1) && (mem_cnt > 1))
+			 _cpuset_to_memsstr(mask, mstr, cpu_cnt, mem_cnt);
 		snprintf(file_path, sizeof(file_path), "%s/%smems",
 			 path, cpuset_prefix);
 		fd = open(file_path, O_CREAT | O_WRONLY, 0700);
@@ -211,7 +251,7 @@ int	slurm_set_cpuset(char *base, char *path, pid_t pid, size_t size,
 			error("open(%s): %m", file_path);
 			return SLURM_ERROR;
 		}
-		rc = write(fd, mstr, rc);
+		rc = write(fd, mstr, strlen(mstr)+1);
 		close(fd);
 		if (rc < 1) {
 			error("write(%s): %m", file_path);

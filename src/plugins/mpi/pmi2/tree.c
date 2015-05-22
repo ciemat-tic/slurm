@@ -57,6 +57,7 @@
 #include "setup.h"
 #include "pmi.h"
 #include "nameserv.h"
+#include "ring.h"
 
 static int _handle_kvs_fence(int fd, Buf buf);
 static int _handle_kvs_fence_resp(int fd, Buf buf);
@@ -65,6 +66,8 @@ static int _handle_spawn_resp(int fd, Buf buf);
 static int _handle_name_publish(int fd, Buf buf);
 static int _handle_name_unpublish(int fd, Buf buf);
 static int _handle_name_lookup(int fd, Buf buf);
+static int _handle_ring(int fd, Buf buf);
+static int _handle_ring_resp(int fd, Buf buf);
 
 static uint32_t  spawned_srun_ports_size = 0;
 static uint16_t *spawned_srun_ports = NULL;
@@ -78,6 +81,8 @@ static int (*tree_cmd_handlers[]) (int fd, Buf buf) = {
 	_handle_name_publish,
 	_handle_name_unpublish,
 	_handle_name_lookup,
+	_handle_ring,
+	_handle_ring_resp,
 	NULL
 };
 
@@ -89,6 +94,8 @@ static char *tree_cmd_names[] = {
 	"TREE_CMD_NAME_PUBLISH",
 	"TREE_CMD_NAME_UNPUBLISH",
 	"TREE_CMD_NAME_LOOKUP",
+	"TREE_CMD_RING",
+	"TREE_CMD_RING_RESP",
 	NULL,
 };
 
@@ -501,6 +508,92 @@ unpack_error:
 	goto out;
 }
 
+/* handles ring_in message from one of our stepd children */
+static int
+_handle_ring(int fd, Buf buf)
+{
+	uint32_t rank, count, temp32;
+	char *left  = NULL;
+	char *right = NULL;
+	int ring_id;
+	int rc = SLURM_SUCCESS;
+
+        debug3("mpi/pmi2: in _handle_ring");
+
+	/* TODO: do we need ntoh translation? */
+
+	/* data consists of:
+         *   uint32_t rank  - tree rank of stepd process that sent message
+         *   uint32_t count - ring in count value
+         *   string   left  - ring in left value
+         *   string   right - ring in right value */
+	safe_unpack32(&rank,  buf);
+	safe_unpack32(&count, buf);
+	safe_unpackstr_xmalloc(&left,  &temp32, buf);
+	safe_unpackstr_xmalloc(&right, &temp32, buf);
+
+	/* lookup ring_id for this child */
+	ring_id = pmix_ring_id_by_rank(rank);
+
+	/* check that we got a valid child id */
+	if (ring_id == -1) {
+		error("mpi/pmi2: received ring_in message from unknown child %d", rank);
+		rc = SLURM_ERROR;
+		goto out;
+	}
+
+	/* execute ring in operation */
+	rc = pmix_ring_in(ring_id, count, left, right);
+
+out:
+	/* free strings unpacked from message */
+	xfree(left);
+	xfree(right);
+        debug3("mpi/pmi2: out _handle_ring");
+	return rc;
+
+unpack_error:
+	error("mpi/pmi2: failed to unpack ring in message");
+	rc = SLURM_ERROR;
+	goto out;
+}
+
+/* handles ring_out messages coming in from parent in stepd tree */
+static int
+_handle_ring_resp(int fd, Buf buf)
+{
+	uint32_t count, temp32;
+	char *left  = NULL;
+	char *right = NULL;
+	int rc = SLURM_SUCCESS;
+
+        debug3("mpi/pmi2: in _handle_ring_resp");
+
+	/* TODO: need ntoh translation? */
+	/* data consists of:
+         *   uint32_t count - ring out count value
+         *   string   left  - ring out left value
+         *   string   right - ring out right value */
+	safe_unpack32(&count, buf);
+	safe_unpackstr_xmalloc(&left,  &temp32, buf);
+	safe_unpackstr_xmalloc(&right, &temp32, buf);
+
+	/* execute ring out operation */
+	rc = pmix_ring_out(count, left, right);
+
+out:
+	/* free strings unpacked from message */
+	xfree(left);
+	xfree(right);
+        debug3("mpi/pmi2: out _handle_ring_resp");
+	return rc;
+
+unpack_error:
+	error("mpi/pmi2: failed to unpack ring out message");
+	rc = SLURM_ERROR;
+	goto out;
+}
+
 /**************************************************************/
 extern int
 handle_tree_cmd(int fd)
@@ -590,13 +683,43 @@ rwfail:
 }
 
 extern int
-tree_msg_to_stepds(char *nodelist, uint32_t len, char *msg)
+tree_msg_to_stepds(hostlist_t hl, uint32_t len, char *data)
 {
-	int rc;
-	rc = slurm_forward_data(nodelist,
-				tree_sock_addr,
-				len,
-				msg);
+	List ret_list = NULL;
+	int temp_rc = 0, rc = 0;
+	ret_data_info_t *ret_data_info = NULL;
+	slurm_msg_t *msg = xmalloc(sizeof(slurm_msg_t));
+	forward_data_msg_t req;
+	char *nodelist = NULL;
+
+	slurm_msg_t_init(msg);
+	req.address = tree_sock_addr;
+	req.len = len;
+	req.data = data;
+
+	msg->msg_type = REQUEST_FORWARD_DATA;
+	msg->data = &req;
+
+	nodelist = hostlist_ranged_string_xmalloc(hl);
+
+	if ((ret_list = slurm_send_recv_msgs(nodelist, msg, 0, false))) {
+		while ((ret_data_info = list_pop(ret_list))) {
+			temp_rc = slurm_get_return_code(ret_data_info->type,
+							ret_data_info->data);
+			if (temp_rc){
+				rc = temp_rc;
+			} else {
+				hostlist_delete_host(hl, 
+							ret_data_info->node_name);
+			}
+		}
+	} else {
+		error("tree_msg_to_stepds: no list was returned");
+		rc = SLURM_ERROR;
+	}
+
+	slurm_free_msg(msg);
+	xfree(nodelist);
 	return rc;
 }
 

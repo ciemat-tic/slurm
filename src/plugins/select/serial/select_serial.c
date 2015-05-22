@@ -105,16 +105,13 @@ uint32_t *cr_node_cores_offset;
  * only load select plugins if the plugin_type string has a
  * prefix of "select/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the node selection API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[] = "Serial Job Resource Selection plugin";
 const char plugin_type[] = "select/serial";
 const uint32_t plugin_id      = 106;
-const uint32_t plugin_version = 120;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 const uint32_t pstate_version = 7;	/* version control on saved state */
 
 uint16_t cr_type = CR_CPU; /* cr_type is overwritten in init() */
@@ -907,6 +904,7 @@ static int _rm_job_from_res(struct part_res_record *part_record_ptr,
 		if (action != 2) {
 			if (job->memory_allocated[n] == 0)
 				continue;	/* no memory allocated */
+
 			if (node_usage[i].alloc_memory <
 			    job->memory_allocated[n]) {
 				error("select/serial: node %s memory is "
@@ -1463,6 +1461,8 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 	select_core_cnt = 0;
 	for (i = 0; i < select_node_cnt; i++) {
 		select_node_record[i].node_ptr = &node_ptr[i];
+		select_node_record[i].mem_spec_limit = node_ptr[i].
+						       mem_spec_limit;
 		if (select_fast_schedule) {
 			struct config_record *config_ptr;
 			config_ptr = node_ptr[i].config_ptr;
@@ -2081,6 +2081,8 @@ extern int select_p_update_node_config(int index)
 
 	select_node_record[index].real_memory = select_node_record[index].
 						node_ptr->real_memory;
+	select_node_record[index].mem_spec_limit = select_node_record[index].
+		node_ptr->mem_spec_limit;
 	return SLURM_SUCCESS;
 }
 

@@ -11,6 +11,7 @@ Documentation for other versions of Slurm is distributed with the code</b></p>
 <h2>Slurm Users</h2>
 <ul>
 <li><a href="quickstart.html">Quick Start User Guide</a></li>
+<li><a href="pdfs/summary.pdf">Command/option Summary (two pages)</a></li>
 <li><a href="man_index.html">Man Pages</a></li>
 <li><a href="rosetta.html">Rosetta Stone of Workload Managers</a></li>
 <li><a href="job_array.html">Job Array Support</a></li>
@@ -119,6 +120,7 @@ Documentation for other versions of Slurm is distributed with the code</b></p>
 <li><a href="launch_plugins.html">Launch Plugin Programmer Guide</a></li>
 <li><a href="mpiplugins.html">MPI Plugin Programmer Guide</a></li>
 <li><a href="acct_gather_energy_plugins.html">Energy Accounting Plugin Programmer Guide</a></li>
+<li><a href="power_plugins.html">Power Management Plugin Programmer Guide</a></li>
 <li><a href="preemption_plugins.html">Preemption Plugin Programmer Guide</a></li>
 <li><a href="priority_plugins.html">Priority Plugin Programmer Guide</a></li>
 <li><a href="proctrack_plugins.html">Process Tracking Plugin Programmer Guide</a></li>
@@ -132,6 +134,6 @@ Documentation for other versions of Slurm is distributed with the code</b></p>
 </li>
 </ul>
 
-<p style="text-align:center;">Last modified 20 November 2014</p>
+<p style="text-align:center;">Last modified 25 March 2015</p>
 
 <!--#include virtual="footer.txt"-->

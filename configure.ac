@@ -110,6 +110,11 @@ PKG_PROG_PKG_CONFIG([0.9.0])
 AM_CONDITIONAL(WITH_CXX, test -n "$ac_ct_CXX")
 AM_CONDITIONAL(WITH_GNU_LD, test "$with_gnu_ld" = "yes")
 
+AC_PATH_PROG([SLEEP_CMD], [sleep], [/bin/sleep])
+AC_DEFINE_UNQUOTED([SLEEP_CMD], ["$SLEEP_CMD"], [Define path to sleep command])
+
+AC_PATH_PROG([SUCMD], [su], [/bin/su])
+AC_DEFINE_UNQUOTED([SUCMD], ["$SUCMD"], [Define path to su command])
 
 dnl Checks for libraries
 dnl
@@ -129,7 +134,7 @@ AC_CHECK_HEADERS(mcheck.h values.h socket.h sys/socket.h  \
 		 pty.h utmp.h \
 		 sys/syslog.h linux/sched.h \
 		 kstat.h paths.h limits.h sys/statfs.h sys/ptrace.h \
-		 sys/termios.h float.h
+		 sys/termios.h float.h sys/statvfs.h
 		)
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIME
@@ -206,6 +211,8 @@ AC_CHECK_FUNCS( \
    get_current_dir_name \
    faccessat \
    eaccess \
+   statvfs \
+   statfs \
 )
 
 AC_CHECK_DECLS([hstrerror, strsignal, sys_siglist])
@@ -237,7 +244,6 @@ AC_DEFINE([H5_NO_DEPRECATED_SYMBOLS], [1], [Make sure we get the 1.8 HDF5 API])
 
 X_AC_HWLOC
 X_AC_FREEIPMI
-X_AC_XCPU
 X_AC_SLURM_SEMAPHORE
 X_AC_RRDTOOL
 
@@ -414,6 +420,11 @@ dnl
 X_AC_BLCR
 
 dnl
+dnl Check for compilation of SLURM with CURL support:
+dnl
+LIBCURL_CHECK_CONFIG
+
+dnl
 dnl Set some configuration based upon multiple configuration parameters
 dnl
 ac_build_smap="no"
@@ -432,6 +443,7 @@ AC_CONFIG_FILES([Makefile
 		 contribs/lua/Makefile
 		 contribs/mic/Makefile
 		 contribs/pam/Makefile
+		 contribs/pam_slurm_adopt/Makefile
 		 contribs/perlapi/Makefile
 		 contribs/perlapi/libslurm/Makefile
 		 contribs/perlapi/libslurm/perl/Makefile.PL
@@ -464,6 +476,8 @@ AC_CONFIG_FILES([Makefile
 		 src/api/Makefile
 		 src/common/Makefile
 		 src/db_api/Makefile
+		 src/layouts/Makefile
+		 src/layouts/unit/Makefile
 		 src/database/Makefile
 		 src/sacct/Makefile
 		 src/sacctmgr/Makefile
@@ -501,6 +515,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/accounting_storage/none/Makefile
 		 src/plugins/accounting_storage/slurmdbd/Makefile
 		 src/plugins/acct_gather_energy/Makefile
+		 src/plugins/acct_gather_energy/cray/Makefile
 		 src/plugins/acct_gather_energy/rapl/Makefile
 		 src/plugins/acct_gather_energy/ipmi/Makefile
 		 src/plugins/acct_gather_energy/none/Makefile
@@ -550,6 +565,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/jobacct_gather/cgroup/Makefile
 		 src/plugins/jobacct_gather/none/Makefile
 		 src/plugins/jobcomp/Makefile
+		 src/plugins/jobcomp/elasticsearch/Makefile
 		 src/plugins/jobcomp/filetxt/Makefile
 		 src/plugins/jobcomp/none/Makefile
 		 src/plugins/jobcomp/script/Makefile
@@ -643,6 +659,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/task/none/Makefile
 		 src/plugins/topology/Makefile
 		 src/plugins/topology/3d_torus/Makefile
+		 src/plugins/topology/hypercube/Makefile
 		 src/plugins/topology/node_rank/Makefile
 		 src/plugins/topology/none/Makefile
 		 src/plugins/topology/tree/Makefile

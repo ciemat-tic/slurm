@@ -121,7 +121,7 @@ typedef struct gres_job_state {
 	uint64_t gres_cnt_alloc;
 
 	/* Resources currently allocated to job on each node */
-	uint32_t node_cnt;
+	uint32_t node_cnt;		/* 0 if no_consume */
 	bitstr_t **gres_bit_alloc;
 
 	/* Resources currently allocated to job steps on each node.
@@ -347,6 +347,18 @@ extern char *gres_get_node_drain(List gres_list);
  * RET - string, must be xfreed by caller
  */
 extern char *gres_get_node_used(List gres_list);
+
+/*
+ * Give the total system count of a given gres
+ */
+extern uint64_t gres_get_system_cnt(char *name);
+
+/*
+ * Get the count of a node's GRES
+ * IN gres_list - List of Gres records for this node to track usage
+ * IN name - name of gres
+ */
+extern uint64_t gres_plugin_node_config_cnt(List gres_list, char *name);
 
 /*
  * Fill in an array of GRES type ids contained within the given node gres_list
@@ -712,5 +724,11 @@ enum gres_step_data_type {
 extern int gres_get_step_info(List step_gres_list, char *gres_name,
 			      uint32_t node_inx,
 			      enum gres_step_data_type data_type, void *data);
+
+extern gres_job_state_t *gres_get_job_state(List gres_list, char *name);
+extern gres_step_state_t *gres_get_step_state(List gres_list, char *name);
+
+extern char *gres_2_tres_str(List gres_list, const List total_tres_list,
+			     bool is_job);
 
 #endif /* !_GRES_H */

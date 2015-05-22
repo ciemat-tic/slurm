@@ -75,6 +75,7 @@
 #include "src/common/slurm_ext_sensors.h"
 #include "src/common/slurm_acct_gather.h"
 #include "src/common/slurm_protocol_interface.h"
+#include "src/common/layouts_mgr.h"
 
 #include "src/slurmctld/agent.h"
 #include "src/slurmctld/burst_buffer.h"
@@ -110,7 +111,7 @@ static pthread_cond_t throttle_cond = PTHREAD_COND_INITIALIZER;
 static void         _fill_ctld_conf(slurm_ctl_conf_t * build_ptr);
 static void         _kill_job_on_msg_fail(uint32_t job_id);
 static int          _is_prolog_finished(uint32_t job_id);
-static int 	    _launch_batch_step(job_desc_msg_t *job_desc_msg,
+static int	    _launch_batch_step(job_desc_msg_t *job_desc_msg,
 				       uid_t uid, uint32_t *step_id,
 				       uint16_t protocol_version);
 static int          _make_step_cred(struct step_record *step_rec,
@@ -141,10 +142,13 @@ inline static void  _slurm_rpc_dump_licenses(slurm_msg_t * msg);
 inline static void  _slurm_rpc_dump_nodes(slurm_msg_t * msg);
 inline static void  _slurm_rpc_dump_node_single(slurm_msg_t * msg);
 inline static void  _slurm_rpc_dump_partitions(slurm_msg_t * msg);
+inline static void  _slurm_rpc_dump_sicp(slurm_msg_t * msg);
 inline static void  _slurm_rpc_dump_spank(slurm_msg_t * msg);
 inline static void  _slurm_rpc_dump_stats(slurm_msg_t * msg);
 inline static void  _slurm_rpc_end_time(slurm_msg_t * msg);
-inline static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg);
+inline static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg,
+					       bool *run_scheduler,
+					       bool running_composite);
 inline static void  _slurm_rpc_get_shares(slurm_msg_t *msg);
 inline static void  _slurm_rpc_get_topo(slurm_msg_t * msg);
 inline static void  _slurm_rpc_get_priority_factors(slurm_msg_t *msg);
@@ -158,7 +162,8 @@ inline static void  _slurm_rpc_job_will_run(slurm_msg_t * msg);
 inline static void  _slurm_rpc_job_alloc_info(slurm_msg_t * msg);
 inline static void  _slurm_rpc_job_alloc_info_lite(slurm_msg_t * msg);
 inline static void  _slurm_rpc_kill_job2(slurm_msg_t *msg);
-inline static void  _slurm_rpc_node_registration(slurm_msg_t * msg);
+inline static void  _slurm_rpc_node_registration(slurm_msg_t *msg,
+						 bool running_composite);
 inline static void  _slurm_rpc_ping(slurm_msg_t * msg);
 inline static void  _slurm_rpc_reboot_nodes(slurm_msg_t * msg);
 inline static void  _slurm_rpc_reconfigure_controller(slurm_msg_t * msg);
@@ -166,6 +171,7 @@ inline static void  _slurm_rpc_resv_create(slurm_msg_t * msg);
 inline static void  _slurm_rpc_resv_update(slurm_msg_t * msg);
 inline static void  _slurm_rpc_resv_delete(slurm_msg_t * msg);
 inline static void  _slurm_rpc_resv_show(slurm_msg_t * msg);
+inline static void  _slurm_rpc_layout_show(slurm_msg_t * msg);
 inline static void  _slurm_rpc_requeue(slurm_msg_t * msg);
 inline static void  _slurm_rpc_takeover(slurm_msg_t * msg);
 inline static void  _slurm_rpc_set_debug_flags(slurm_msg_t *msg);
@@ -186,10 +192,18 @@ inline static void  _slurm_rpc_trigger_pull(slurm_msg_t * msg);
 inline static void  _slurm_rpc_update_front_end(slurm_msg_t * msg);
 inline static void  _slurm_rpc_update_job(slurm_msg_t * msg);
 inline static void  _slurm_rpc_update_node(slurm_msg_t * msg);
+inline static void  _slurm_rpc_update_layout(slurm_msg_t * msg);
 inline static void  _slurm_rpc_update_partition(slurm_msg_t * msg);
 inline static void  _slurm_rpc_update_block(slurm_msg_t * msg);
 inline static void  _slurm_rpc_dump_cache(slurm_msg_t * msg);
 inline static void  _update_cred_key(void);
+
+static void  _slurm_rpc_composite_msg(slurm_msg_t *msg);
+static void  _slurm_rpc_comp_msg_list(composite_msg_t * comp_msg,
+				      bool *run_scheduler,
+				      List msg_list_in,
+				      struct timeval *start_tv,
+				      int timeout);
 
 extern diag_stats_t slurmctld_diag_stats;
 
@@ -211,7 +225,6 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 		      g_slurm_auth_errstr(g_slurm_auth_errno(msg->auth_cred)));
 		return;
 	}
-
 	START_TIMER;
 	slurm_mutex_lock(&rpc_mutex);
 	if (rpc_type_size == 0) {
@@ -307,7 +320,8 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 		slurm_free_part_info_request_msg(msg->data);
 		break;
 	case MESSAGE_EPILOG_COMPLETE:
-		_slurm_rpc_epilog_complete(msg);
+		i = 0;
+		_slurm_rpc_epilog_complete(msg, (bool *)&i, 0);
 		slurm_free_epilog_complete_msg(msg->data);
 		break;
 	case REQUEST_CANCEL_JOB_STEP:
@@ -340,7 +354,7 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 		slurm_free_job_desc_msg(msg->data);
 		break;
 	case MESSAGE_NODE_REGISTRATION_STATUS:
-		_slurm_rpc_node_registration(msg);
+		_slurm_rpc_node_registration(msg, 0);
 		slurm_free_node_registration_status_msg(msg->data);
 		break;
 	case REQUEST_JOB_ALLOCATION_INFO:
@@ -395,6 +409,10 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 		_slurm_rpc_update_node(msg);
 		slurm_free_update_node_msg(msg->data);
 		break;
+	case REQUEST_UPDATE_LAYOUT:
+		_slurm_rpc_update_layout(msg);
+		slurm_free_update_layout_msg(msg->data);
+		break;
 	case REQUEST_CREATE_PARTITION:
 	case REQUEST_UPDATE_PARTITION:
 		_slurm_rpc_update_partition(msg);
@@ -423,6 +441,10 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 	case REQUEST_RESERVATION_INFO:
 		_slurm_rpc_resv_show(msg);
 		slurm_free_resv_info_request_msg(msg->data);
+		break;
+	case REQUEST_LAYOUT_INFO:
+		_slurm_rpc_layout_show(msg);
+		slurm_free_layout_info_request_msg(msg->data);
 		break;
 	case REQUEST_NODE_REGISTRATION_STATUS:
 		error("slurmctld is talking with itself. "
@@ -541,10 +563,18 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 		_slurm_rpc_kill_job2(msg);
 		slurm_free_job_step_kill_msg(msg->data);
 		break;
-	 case REQUEST_CACHE_INFO:
-		 _slurm_rpc_dump_cache(msg);
-		 slurm_free_cache_info_request_msg(msg->data);
-		 break;
+	case MESSAGE_COMPOSITE:
+		_slurm_rpc_composite_msg(msg);
+		slurm_free_composite_msg(msg->data);
+		break;
+	case REQUEST_CACHE_INFO:
+		_slurm_rpc_dump_cache(msg);
+		slurm_free_cache_info_request_msg(msg->data);
+		break;
+	case REQUEST_SICP_INFO:
+		_slurm_rpc_dump_sicp(msg);
+		/* No body to free */
+		break;
 	default:
 		error("invalid RPC msg_type=%u", msg->msg_type);
 		slurm_send_rc_msg(msg, EINVAL);
@@ -579,7 +609,10 @@ static void _throttle_start(int *active_rpc_cnt)
 		pthread_cond_wait(&throttle_cond, &throttle_mutex);
 	}
 	slurm_mutex_unlock(&throttle_mutex);
-	usleep(1);
+	if (LOTS_OF_AGENTS)
+		usleep(1000);
+	else
+		usleep(1);
 }
 static void _throttle_fini(int *active_rpc_cnt)
 {
@@ -701,6 +734,7 @@ static void _fill_ctld_conf(slurm_ctl_conf_t * conf_ptr)
 	conf_ptr->kill_wait           = conf->kill_wait;
 	conf_ptr->kill_on_bad_exit    = conf->kill_on_bad_exit;
 
+	conf_ptr->launch_params       = xstrdup(conf->launch_params);
 	conf_ptr->launch_type         = xstrdup(conf->launch_type);
 	conf_ptr->layouts             = xstrdup(conf->layouts);
 	conf_ptr->licenses            = xstrdup(conf->licenses);
@@ -718,6 +752,7 @@ static void _fill_ctld_conf(slurm_ctl_conf_t * conf_ptr)
 	conf_ptr->min_job_age         = conf->min_job_age;
 	conf_ptr->mpi_default         = xstrdup(conf->mpi_default);
 	conf_ptr->mpi_params          = xstrdup(conf->mpi_params);
+	conf_ptr->msg_aggr_params     = xstrdup(conf->msg_aggr_params);
 	conf_ptr->msg_timeout         = conf->msg_timeout;
 
 	conf_ptr->next_job_id         = get_next_job_id();
@@ -749,6 +784,7 @@ static void _fill_ctld_conf(slurm_ctl_conf_t * conf_ptr)
 	conf_ptr->private_data        = conf->private_data;
 	conf_ptr->proctrack_type      = xstrdup(conf->proctrack_type);
 	conf_ptr->prolog              = xstrdup(conf->prolog);
+	conf_ptr->prolog_epilog_timeout = conf->prolog_epilog_timeout;
 	conf_ptr->prolog_slurmctld    = xstrdup(conf->prolog_slurmctld);
 	conf_ptr->prolog_flags        = conf->prolog_flags;
 	conf_ptr->propagate_prio_process =
@@ -830,6 +866,7 @@ static void _fill_ctld_conf(slurm_ctl_conf_t * conf_ptr)
 	conf_ptr->task_plugin         = xstrdup(conf->task_plugin);
 	conf_ptr->task_plugin_param   = conf->task_plugin_param;
 	conf_ptr->tmp_fs              = xstrdup(conf->tmp_fs);
+	conf_ptr->topology_param      = xstrdup(conf->topology_param);
 	conf_ptr->topology_plugin     = xstrdup(conf->topology_plugin);
 	conf_ptr->track_wckey         = conf->track_wckey;
 	conf_ptr->tree_width          = conf->tree_width;
@@ -925,6 +962,7 @@ static int _make_step_cred(struct step_record *step_ptr,
 	cred_arg.stepid   = step_ptr->step_id;
 	cred_arg.uid      = job_ptr->user_id;
 
+	cred_arg.job_constraints = job_ptr->details->features;
 	cred_arg.job_core_bitmap = job_resrcs_ptr->core_bitmap;
 	cred_arg.job_core_spec   = job_ptr->details->core_spec;
 	cred_arg.job_hostlist    = job_resrcs_ptr->nodes;
@@ -1118,12 +1156,9 @@ static void _slurm_rpc_allocate_resources(slurm_msg_t * msg)
 
 		if (slurm_send_node_msg(msg->conn_fd, &response_msg) < 0)
 			_kill_job_on_msg_fail(job_ptr->job_id);
-		xfree(alloc_msg.cpu_count_reps);
-		xfree(alloc_msg.cpus_per_node);
-		xfree(alloc_msg.node_list);
-		xfree(alloc_msg.partition);
-		xfree(alloc_msg.alias_list);
-		select_g_select_jobinfo_free(alloc_msg.select_jobinfo);
+
+		slurm_free_resource_allocation_response_msg_members(&alloc_msg);
+
 		schedule_job_save();	/* has own locks */
 		schedule_node_save();	/* has own locks */
 	} else {	/* allocate error */
@@ -1191,7 +1226,7 @@ static void _slurm_rpc_dump_jobs(slurm_msg_t * msg)
 	slurm_msg_t response_msg;
 	job_info_request_msg_t *job_info_request_msg =
 		(job_info_request_msg_t *) msg->data;
-	/* Locks: Read config job, write node (for hiding) */
+	/* Locks: Read config job, write partition (for hiding) */
 	slurmctld_lock_t job_read_lock = {
 		READ_LOCK, READ_LOCK, NO_LOCK, WRITE_LOCK };
 	uid_t uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
@@ -1228,6 +1263,41 @@ static void _slurm_rpc_dump_jobs(slurm_msg_t * msg)
 		slurm_send_node_msg(msg->conn_fd, &response_msg);
 		xfree(dump);
 	}
+}
+
+/* _slurm_rpc_dump_sicp - process RPC for SICP job state information */
+static void _slurm_rpc_dump_sicp(slurm_msg_t * msg)
+{
+	DEF_TIMERS;
+	char *dump;
+	int dump_size;
+	slurm_msg_t response_msg;
+	/* Locks: Read config job, write partition (for hiding) */
+	slurmctld_lock_t job_read_lock = {
+		READ_LOCK, READ_LOCK, NO_LOCK, WRITE_LOCK };
+	uid_t uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
+
+	START_TIMER;
+	debug2("Processing RPC: REQUEST_SICP_INFO from uid=%d", uid);
+	lock_slurmctld(job_read_lock);
+	pack_all_sicp(&dump, &dump_size,
+		      g_slurm_auth_get_uid(msg->auth_cred, NULL),
+		      msg->protocol_version);
+	unlock_slurmctld(job_read_lock);
+	END_TIMER2("_slurm_rpc_dump_sicp");
+
+	/* init response_msg structure */
+	slurm_msg_t_init(&response_msg);
+	response_msg.flags = msg->flags;
+	response_msg.protocol_version = msg->protocol_version;
+	response_msg.address = msg->address;
+	response_msg.msg_type = RESPONSE_SICP_INFO;
+	response_msg.data = dump;
+	response_msg.data_size = dump_size;
+
+	/* send message */
+	slurm_send_node_msg(msg->conn_fd, &response_msg);
+	xfree(dump);
 }
 
 /* _slurm_rpc_dump_jobs - process RPC for job state information */
@@ -1617,8 +1687,11 @@ static void _slurm_rpc_dump_partitions(slurm_msg_t * msg)
 
 /* _slurm_rpc_epilog_complete - process RPC noting the completion of
  * the epilog denoting the completion of a job it its entirety */
-static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg)
+static void  _slurm_rpc_epilog_complete(slurm_msg_t *msg,
+					bool *run_scheduler,
+					bool running_composite)
 {
+	static int active_rpc_cnt = 0;
 	static time_t config_update = 0;
 	static bool defer_sched = false;
 	DEF_TIMERS;
@@ -1628,7 +1701,6 @@ static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg)
 	uid_t uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
 	epilog_complete_msg_t *epilog_msg =
 		(epilog_complete_msg_t *) msg->data;
-	bool run_scheduler = false;
 	struct job_record  *job_ptr;
 	char jbuf[JBUFSIZ];
 
@@ -1641,31 +1713,49 @@ static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg)
 	}
 
 	job_ptr = find_job_record(epilog_msg->job_id);
-	if (config_update != slurmctld_conf.last_update) {
-		char *sched_params = slurm_get_sched_params();
-		defer_sched = (sched_params && strstr(sched_params,"defer"));
-		xfree(sched_params);
+	/* Only throttle on none composite messages, the lock should
+	 * already be set earlier. */
+	if (!running_composite) {
+		if (config_update != slurmctld_conf.last_update) {
+			char *sched_params = slurm_get_sched_params();
+			defer_sched = (sched_params &&
+				       strstr(sched_params, "defer"));
+			xfree(sched_params);
+			config_update = slurmctld_conf.last_update;
+		}
+
+		_throttle_start(&active_rpc_cnt);
+		lock_slurmctld(job_write_lock);
 	}
 
-	lock_slurmctld(job_write_lock);
+	if (slurmctld_conf.debug_flags & DEBUG_FLAG_ROUTE)
+		info("_slurm_rpc_epilog_complete: "
+		     "node_name = %s, job_id = %u", epilog_msg->node_name,
+		     epilog_msg->job_id);
+
 	if (job_epilog_complete(epilog_msg->job_id, epilog_msg->node_name,
 				epilog_msg->return_code))
-		run_scheduler = true;
-	unlock_slurmctld(job_write_lock);
+		*run_scheduler = true;
+
+	if (!running_composite) {
+		unlock_slurmctld(job_write_lock);
+		_throttle_fini(&active_rpc_cnt);
+	}
+
 	END_TIMER2("_slurm_rpc_epilog_complete");
 
 	if (epilog_msg->return_code)
 		error("%s: epilog error %s Node=%s Err=%s %s",
-		      __func__, jobid2str(job_ptr, jbuf),
+		      __func__, jobid2str(job_ptr, jbuf, sizeof(jbuf)),
 		      epilog_msg->node_name,
 		      slurm_strerror(epilog_msg->return_code), TIME_STR);
 	else
 		debug2("%s: %s Node=%s %s",
-		       __func__, jobid2str(job_ptr, jbuf),
+		       __func__, jobid2str(job_ptr, jbuf, sizeof(jbuf)),
 		       epilog_msg->node_name, TIME_STR);
 
 	/* Functions below provide their own locking */
-	if (run_scheduler) {
+	if (!running_composite && *run_scheduler) {
 		/*
 		 * In defer mode, avoid triggering the scheduler logic
 		 * for every epilog complete message.
@@ -1674,7 +1764,7 @@ static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg)
 		 * calls can be very high for large machine or large number
 		 * of managed jobs.
 		 */
-		if (!defer_sched)
+		if (!LOTS_OF_AGENTS && !defer_sched)
 			(void) schedule(0);	/* Has own locking */
 		schedule_node_save();		/* Has own locking */
 		schedule_job_save();		/* Has own locking */
@@ -1836,12 +1926,12 @@ static void _slurm_rpc_complete_job_allocation(slurm_msg_t * msg)
 	/* return result */
 	if (error_code) {
 		info("%s: %s error %s ",
-		     __func__, jobid2str(job_ptr, jbuf),
+		     __func__, jobid2str(job_ptr, jbuf, sizeof(jbuf)),
 		     slurm_strerror(error_code));
 		slurm_send_rc_msg(msg, error_code);
 	} else {
 		debug2("%s: %s %s", __func__,
-		       jobid2str(job_ptr, jbuf),
+		       jobid2str(job_ptr, jbuf, sizeof(jbuf)),
 		       TIME_STR);
 		slurm_send_rc_msg(msg, SLURM_SUCCESS);
 		(void) schedule_job_save();	/* Has own locking */
@@ -1935,7 +2025,8 @@ static void _slurm_rpc_complete_batch_script(slurm_msg_t * msg)
 		 * batch job is requeued and started on a different node.
 		 * The end result is one batch complete RPC from each node. */
 		error("Batch completion for job %u sent from wrong node "
-		      "(%s rather than %s), ignored request",
+		      "(%s rather than %s). "
+		      "Was the job requeued due to node failure?",
 		      comp_msg->job_id,
 		      comp_msg->node_name, job_ptr->batch_host);
 		unlock_slurmctld(job_write_lock);
@@ -2396,7 +2487,8 @@ static void _slurm_rpc_job_will_run(slurm_msg_t * msg)
 
 /* _slurm_rpc_node_registration - process RPC to determine if a node's
  *	actual configuration satisfies the configured specification */
-static void _slurm_rpc_node_registration(slurm_msg_t * msg)
+static void _slurm_rpc_node_registration(slurm_msg_t * msg,
+					 bool running_composite)
 {
 	/* init */
 	DEF_TIMERS;
@@ -2435,7 +2527,8 @@ static void _slurm_rpc_node_registration(slurm_msg_t * msg)
 			      "set DebugFlags=NO_CONF_HASH in your slurm.conf.",
 			      node_reg_stat_msg->node_name);
 		}
-		lock_slurmctld(job_write_lock);
+		if (!running_composite)
+			lock_slurmctld(job_write_lock);
 #ifdef HAVE_FRONT_END		/* Operates only on front-end */
 		error_code = validate_nodes_via_front_end(node_reg_stat_msg,
 							  msg->protocol_version,
@@ -2446,7 +2539,8 @@ static void _slurm_rpc_node_registration(slurm_msg_t * msg)
 						 msg->protocol_version,
 						 &newly_up);
 #endif
-		unlock_slurmctld(job_write_lock);
+		if (!running_composite)
+			unlock_slurmctld(job_write_lock);
 		END_TIMER2("_slurm_rpc_node_registration");
 		if (newly_up) {
 			queue_job_scheduler();
@@ -2660,12 +2754,8 @@ static void _slurm_rpc_job_alloc_info_lite(slurm_msg_t * msg)
 
 		slurm_send_node_msg(msg->conn_fd, &response_msg);
 
-		xfree(job_info_resp_msg.cpu_count_reps);
-		xfree(job_info_resp_msg.cpus_per_node);
-		xfree(job_info_resp_msg.alias_list);
-		xfree(job_info_resp_msg.node_list);
-		xfree(job_info_resp_msg.partition);
-		select_g_select_jobinfo_free(job_info_resp_msg.select_jobinfo);
+		slurm_free_resource_allocation_response_msg_members(
+			&job_info_resp_msg);
 	}
 }
 
@@ -2840,7 +2930,7 @@ static void _slurm_rpc_reconfigure_controller(slurm_msg_t * msg)
 			msg_to_slurmd(REQUEST_RECONFIGURE);
 		}
 		in_progress = false;
-		slurm_sched_g_partition_change();	/* notify sched plugin */
+		slurm_sched_g_partition_change();      /* notify sched plugin */
 		unlock_slurmctld(config_write_lock);
 		assoc_mgr_set_missing_uids();
 		start_power_mgr(&slurmctld_config.thread_id_power);
@@ -3242,7 +3332,7 @@ static void _slurm_rpc_submit_batch_job(slurm_msg_t * msg)
 				error("Security violation, uid=%d attempting "
 				      "to execute a step within job %u owned "
 				      "by user %u",
-		 		      uid, job_ptr->job_id,
+				      uid, job_ptr->job_id,
 				      job_ptr->user_id);
 				slurm_send_rc_msg(msg, ESLURM_USER_ID_MISSING);
 				unlock_slurmctld(job_write_lock);
@@ -3520,6 +3610,52 @@ static void _slurm_rpc_update_node(slurm_msg_t * msg)
 	trigger_reconfig();
 }
 
+/*
+ * _slurm_rpc_update_layout - process RPC to update the configuration of a
+ *	layout (e.g. params of entities)
+ */
+static void _slurm_rpc_update_layout(slurm_msg_t * msg)
+{
+	int error_code = SLURM_SUCCESS;
+	Buf buffer;
+	DEF_TIMERS;
+	update_layout_msg_t *msg_ptr = (update_layout_msg_t *) msg->data;
+	int shrink_size;
+
+	/* Locks: Write job and write node */
+	uid_t uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
+
+	START_TIMER;
+	debug2("Processing RPC: REQUEST_UPDATE_LAYOUT from uid=%d", uid);
+	if (!validate_super_user(uid)) {
+		error_code = ESLURM_USER_ID_MISSING;
+		error("Security violation, UPDATE_LAYOUT RPC from uid=%d", uid);
+	}
+
+	if (error_code == SLURM_SUCCESS) {
+		/* do RPC call */
+		buffer = init_buf(BUF_SIZE);
+		packstr(msg_ptr->arg, buffer);
+		shrink_size = (int)get_buf_offset(buffer) - size_buf(buffer);
+		set_buf_offset(buffer, 0);
+		grow_buf(buffer, shrink_size);	/* Shrink actually */
+		error_code = layouts_update_layout(msg_ptr->layout, buffer);
+		free_buf(buffer);
+		END_TIMER2("_slurm_rpc_update_node");
+	}
+
+	/* return result */
+	if (error_code) {
+		info("_slurm_rpc_update_layout for %s: %s",
+		     msg_ptr->layout, slurm_strerror(error_code));
+		slurm_send_rc_msg(msg, error_code);
+	} else {
+		debug2("_slurm_rpc_update_layout complete for %s %s",
+		       msg_ptr->layout, TIME_STR);
+		slurm_send_rc_msg(msg, SLURM_SUCCESS);
+	}
+}
+
 /* _slurm_rpc_update_partition - process RPC to update the configuration
  *	of a partition (e.g. UP/DOWN) */
 static void _slurm_rpc_update_partition(slurm_msg_t * msg)
@@ -3793,6 +3929,58 @@ static void _slurm_rpc_resv_show(slurm_msg_t * msg)
 		slurm_send_node_msg(msg->conn_fd, &response_msg);
 		xfree(dump);
 	}
+}
+
+/* _slurm_rpc_layout_show - process RPC to dump layout info */
+static void _slurm_rpc_layout_show(slurm_msg_t * msg)
+{
+	layout_info_request_msg_t *layout_req_msg = (layout_info_request_msg_t *)
+		msg->data;
+	DEF_TIMERS;
+	slurm_msg_t response_msg;
+	char *dump;
+	int dump_size;
+	static int high_buffer_size = (1024 * 1024);
+	Buf buffer = init_buf(high_buffer_size);
+
+	START_TIMER;
+	debug2("Processing RPC: REQUEST_LAYOUT_INFO");
+	if (layout_req_msg->layout_type == NULL) {
+		dump = slurm_get_layouts();
+		pack32((uint32_t) 1, buffer);	/* Record count */
+		packstr(dump, buffer);
+		xfree(dump);
+	} else {
+		if ( layouts_pack_layout(layout_req_msg->layout_type,
+					 layout_req_msg->entities,
+					 layout_req_msg->type,
+					 layout_req_msg->no_relation,
+					 buffer) != SLURM_SUCCESS) {
+			debug2("%s: unable to get layout[%s]",
+			       __func__, layout_req_msg->layout_type);
+			slurm_send_rc_msg(msg, SLURM_NO_CHANGE_IN_DATA);
+			free_buf(buffer);
+			return;
+		}
+	}
+
+	dump_size = get_buf_offset(buffer);
+	high_buffer_size = MAX(high_buffer_size, dump_size);
+	dump = xfer_buf_data(buffer);
+	END_TIMER2("_slurm_rpc_resv_show");
+
+	/* init response_msg structure */
+	slurm_msg_t_init(&response_msg);
+	response_msg.flags = msg->flags;
+	response_msg.protocol_version = msg->protocol_version;
+	response_msg.address = msg->address;
+	response_msg.msg_type = RESPONSE_LAYOUT_INFO;
+	response_msg.data = dump;
+	response_msg.data_size = dump_size;
+
+	/* send message */
+	slurm_send_node_msg(msg->conn_fd, &response_msg);
+	xfree(dump);
 }
 
 /* _slurm_rpc_update_block - process RPC to update the configuration
@@ -4543,7 +4731,8 @@ inline static void  _slurm_rpc_trigger_pull(slurm_msg_t * msg)
 	      (unsigned int) uid);
 	if (!validate_slurm_user(uid)) {
 		rc = ESLURM_USER_ID_MISSING;
-		error("Security violation, REQUEST_TRIGGER_PULL RPC from uid=%d",
+		error("Security violation, REQUEST_TRIGGER_PULL RPC "
+		      "from uid=%d",
 		      uid);
 	} else
 		rc = trigger_pull(trigger_ptr);
@@ -4762,7 +4951,7 @@ inline static void  _slurm_rpc_set_schedlog_level(slurm_msg_t *msg)
 	lock_slurmctld (config_read_lock);
 	log_opts.logfile_level = schedlog_level;
 	sched_log_alter(log_opts, LOG_DAEMON, slurmctld_conf.sched_logfile);
- 	unlock_slurmctld (config_read_lock);
+	unlock_slurmctld (config_read_lock);
 
 	conf = slurm_conf_lock();
 	old_schedlog_level = conf->sched_log_level;
@@ -4781,6 +4970,7 @@ inline static void  _slurm_rpc_accounting_update_msg(slurm_msg_t *msg)
 	uid_t uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
 	accounting_update_msg_t *update_ptr =
 		(accounting_update_msg_t *) msg->data;
+	bool sent_rc = false;
 	DEF_TIMERS;
 
 	START_TIMER;
@@ -4801,13 +4991,34 @@ inline static void  _slurm_rpc_accounting_update_msg(slurm_msg_t *msg)
 
 	slurm_send_rc_msg(msg, rc);
 
-	if (update_ptr->update_list && list_count(update_ptr->update_list))
-		rc = assoc_mgr_update(update_ptr->update_list);
+	if (update_ptr->update_list && list_count(update_ptr->update_list)) {
+		slurmdb_update_object_t *object =
+			list_peek(update_ptr->update_list);
+		if (object->type != SLURMDB_ADD_TRES) {
+			/* If not specific message types, send message back
+			 * to the caller immediately letting him know we got it.
+			 * In most cases there is no need to wait since the end
+			 * result would be the same if we wait or not
+			 * since the update has already happened in
+			 * the database.
+			 */
+			slurm_send_rc_msg(msg, rc);
+			sent_rc = true;
+		}
+		rc = assoc_mgr_update(update_ptr->update_list, 0);
+	}
 
 	END_TIMER2("_slurm_rpc_accounting_update_msg");
 
-	if (rc != SLURM_SUCCESS)
-		error("assoc_mgr_update gave error: %s", slurm_strerror(rc));
+	if (sent_rc) {
+		if (rc != SLURM_SUCCESS)
+			error("assoc_mgr_update gave error: %s",
+			      slurm_strerror(rc));
+	} else {
+		info("sending after");
+		slurm_send_rc_msg(msg, rc);
+	}
+
 }
 
 /* _slurm_rpc_reboot_nodes - process RPC to schedule nodes reboot */
@@ -5156,7 +5367,7 @@ _slurm_rpc_kill_job2(slurm_msg_t *msg)
 	uid_t uid;
 	int cc;
 
-	kill = 	(job_step_kill_msg_t *)msg->data;
+	kill =	(job_step_kill_msg_t *)msg->data;
 	uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
 
 	START_TIMER;
@@ -5184,6 +5395,202 @@ _slurm_rpc_kill_job2(slurm_msg_t *msg)
 
 	unlock_slurmctld(lock);
 	END_TIMER2("_slurm_rpc_kill_job2");
+}
+
+/* Return the number of micro-seconds between now and argument "tv" */
+static int _delta_tv(struct timeval *tv)
+{
+	struct timeval now = {0, 0};
+	int delta_t;
+
+	if (gettimeofday(&now, NULL))
+		return 1;		/* Some error */
+
+	delta_t  = (now.tv_sec - tv->tv_sec) * 1000000;
+	delta_t += (now.tv_usec - tv->tv_usec);
+	return delta_t;
+}
+
+static void  _slurm_rpc_composite_msg(slurm_msg_t *msg)
+{
+	static time_t config_update = 0;
+	static bool defer_sched = false;
+	static int sched_timeout = 0;
+	static int active_rpc_cnt = 0;
+	struct timeval start_tv;
+	bool run_scheduler = false;
+	composite_msg_t *comp_msg, comp_resp_msg;
+	/* Locks: Read configuration, write job, write node */
+	slurmctld_lock_t job_write_lock = {
+		READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
+
+	memset(&comp_resp_msg, 0, sizeof(composite_msg_t));
+	comp_resp_msg.msg_list = list_create(slurm_free_comp_msg_list);
+
+	comp_msg = (composite_msg_t *) msg->data;
+
+	if (slurmctld_conf.debug_flags & DEBUG_FLAG_ROUTE)
+		info("Processing RPC: MESSAGE_COMPOSITE msg with %d messages",
+		     comp_msg->msg_list ? list_count(comp_msg->msg_list) : 0);
+
+	if (config_update != slurmctld_conf.last_update) {
+		char *sched_params = slurm_get_sched_params();
+		int time_limit;
+		char *tmp_ptr;
+
+		defer_sched = (sched_params && strstr(sched_params, "defer"));
+
+		time_limit = slurm_get_msg_timeout() / 2;
+		if (sched_params &&
+		    (tmp_ptr = strstr(sched_params, "max_sched_time="))) {
+			sched_timeout = atoi(tmp_ptr + 15);
+			if ((sched_timeout <= 0) ||
+			    (sched_timeout > time_limit)) {
+				error("Invalid max_sched_time: %d",
+				      sched_timeout);
+				sched_timeout = 0;
+			}
+		}
+
+		if (sched_timeout == 0) {
+			sched_timeout = MAX(time_limit, 1);
+			sched_timeout = MIN(sched_timeout, 2);
+			sched_timeout *= 1000000;
+		}
+		xfree(sched_params);
+		config_update = slurmctld_conf.last_update;
+	}
+
+	_throttle_start(&active_rpc_cnt);
+	lock_slurmctld(job_write_lock);
+	gettimeofday(&start_tv, NULL);
+	_slurm_rpc_comp_msg_list(comp_msg, &run_scheduler,
+				 comp_resp_msg.msg_list, &start_tv,
+				 sched_timeout);
+	unlock_slurmctld(job_write_lock);
+	_throttle_fini(&active_rpc_cnt);
+
+	if (list_count(comp_resp_msg.msg_list)) {
+		slurm_msg_t resp_msg;
+		slurm_msg_t_init(&resp_msg);
+		resp_msg.flags    = msg->flags;
+		resp_msg.protocol_version = msg->protocol_version;
+		memcpy(&resp_msg.address, &comp_msg->sender,
+		       sizeof(slurm_addr_t));
+		resp_msg.msg_type = RESPONSE_MESSAGE_COMPOSITE;
+		resp_msg.data     = &comp_resp_msg;
+		slurm_send_only_node_msg(&resp_msg);
+	}
+	FREE_NULL_LIST(comp_resp_msg.msg_list);
+
+	/* Functions below provide their own locking */
+	if (run_scheduler) {
+		/*
+		 * In defer mode, avoid triggering the scheduler logic
+		 * for every epilog complete message.
+		 * As one epilog message is sent from every node of each
+		 * job at termination, the number of simultaneous schedule
+		 * calls can be very high for large machine or large number
+		 * of managed jobs.
+		 */
+		if (!LOTS_OF_AGENTS && !defer_sched)
+			(void) schedule(0);	/* Has own locking */
+		schedule_node_save();		/* Has own locking */
+		schedule_job_save();		/* Has own locking */
+	}
+}
+
+static void  _slurm_rpc_comp_msg_list(composite_msg_t * comp_msg,
+				      bool *run_scheduler,
+				      List msg_list_in,
+				      struct timeval *start_tv,
+				      int timeout)
+{
+	ListIterator itr;
+	slurm_msg_t *next_msg;
+	composite_msg_t *ncomp_msg;
+	composite_msg_t *comp_resp_msg;
+	/* Locks: Read configuration, write job, write node */
+	slurmctld_lock_t job_write_lock = {
+		READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
+	DEF_TIMERS;
+
+	START_TIMER;
+
+	itr = list_iterator_create(comp_msg->msg_list);
+	while ((next_msg = list_next(itr))) {
+		if (_delta_tv(start_tv) >= timeout) {
+			END_TIMER;
+			if (slurmctld_conf.debug_flags & DEBUG_FLAG_ROUTE)
+				info("composite message processing "
+				     "yielding locks after running for %s",
+				     TIME_STR);
+			unlock_slurmctld(job_write_lock);
+			usleep(10);
+			lock_slurmctld(job_write_lock);
+			gettimeofday(start_tv, NULL);
+			START_TIMER;
+		}
+		/* The ret_list is used by slurm_send_rc_msg to house
+		   replys going back to the nodes.
+		*/
+		FREE_NULL_LIST(next_msg->ret_list);
+		next_msg->ret_list = msg_list_in;
+		switch (next_msg->msg_type) {
+		case MESSAGE_COMPOSITE:
+			comp_resp_msg = xmalloc(sizeof(composite_msg_t));
+			comp_resp_msg->msg_list =
+				list_create(slurm_free_comp_msg_list);
+
+			ncomp_msg = (composite_msg_t *) next_msg->data;
+			if (slurmctld_conf.debug_flags & DEBUG_FLAG_ROUTE)
+				info("Processing embedded MESSAGE_COMPOSITE "
+				     "msg with %d direct "
+				     "messages", ncomp_msg->msg_list ?
+				     list_count(ncomp_msg->msg_list) : 0);
+			_slurm_rpc_comp_msg_list(ncomp_msg, run_scheduler,
+						 comp_resp_msg->msg_list,
+						 start_tv, timeout);
+			if (list_count(comp_resp_msg->msg_list)) {
+				slurm_msg_t *resp_msg =
+					xmalloc_nz(sizeof(slurm_msg_t));
+				slurm_msg_t_init(resp_msg);
+				resp_msg->msg_index = next_msg->msg_index;
+				resp_msg->flags = next_msg->flags;
+				resp_msg->protocol_version =
+					next_msg->protocol_version;
+				resp_msg->msg_type = RESPONSE_MESSAGE_COMPOSITE;
+				/* You can't just set the
+				 * resp_msg->address here, it won't
+				 * make it to where it needs to be
+				 * used, set the sender and let it be
+				 * handled on the tree node.
+				 */
+				memcpy(&comp_resp_msg->sender,
+				       &comp_msg->sender,
+				       sizeof(slurm_addr_t));
+
+				resp_msg->data = comp_resp_msg;
+
+				list_append(msg_list_in, resp_msg);
+			} else
+				slurm_free_composite_msg(comp_resp_msg);
+			break;
+		case MESSAGE_EPILOG_COMPLETE:
+			_slurm_rpc_epilog_complete(next_msg, run_scheduler, 1);
+			break;
+		case MESSAGE_NODE_REGISTRATION_STATUS:
+			_slurm_rpc_node_registration(next_msg, 1);
+			break;
+		default:
+			error("_slurm_rpc_comp_msg_list: invalid msg type");
+			break;
+		}
+		next_msg->ret_list = NULL;
+	}
+	list_iterator_destroy(itr);
+	END_TIMER;
+	/* NOTE: RPC has no response */
 }
 
 /* _slurm_rpc_dump_cache()

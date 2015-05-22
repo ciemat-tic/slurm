@@ -1,4 +1,4 @@
-.TH "srun" "1" "SLURM 15.08" "November 2014" "SLURM Commands"
+.TH srun "1" "Slurm Commands" "April 2015" "Slurm Commands"
 
 .SH "NAME"
 srun \- Run parallel jobs
@@ -197,7 +197,7 @@ For example, \fB\-\-constraint="intel"\fR
 A request can specify the number of nodes needed with some feature
 by appending an asterisk and count after the feature name.
 For example "\fB\-\-nodes=16 \-\-constraint=graphics*4 ..."\fR
-indicates that the job requires 16 nodes at that at least four of those
+indicates that the job requires 16 nodes and that at least four of those
 nodes must have the feature "graphics."
 .TP
 \fBAND\fR
@@ -279,12 +279,6 @@ By default, a job step has access to every CPU allocated to the job.
 To ensure that distinct CPUs are allocated to each job step, use the
 \fB\-\-exclusive\fR option.
 
-If the job step allocation includes an allocation with a number of
-sockets, cores, or threads equal to the number of tasks times cpus\-per\-task,
-then the tasks will by default be bound to the appropriate resources (auto
-binding). Disable this mode of operation by explicitly setting
-"-\-cpu_bind=none".
-
 Note that a job step can be allocated different numbers of CPUs on each node
 or be allocated CPUs not starting at location zero. Therefore one of the
 options which automatically generate the task binding is recommended.
@@ -295,6 +289,20 @@ Binding a task to a NUMA locality domain means to bind the task to the set of
 CPUs that belong to the NUMA locality domain or "NUMA node".
 If NUMA locality domain options are used on systems with no NUMA support, then
 each socket is considered a locality domain.
+
+.PD
+.RS
+.TP
+\fBAuto Binding\fR
+Applies only when task/affinity is enabled. If the job step allocation includes an
+allocation with a number of
+sockets, cores, or threads equal to the number of tasks times cpus\-per\-task,
+then the tasks will by default be bound to the appropriate resources (auto
+binding). Disable this mode of operation by explicitly setting
+"-\-cpu_bind=none". Use TaskPluginParam=autobind=[threads|cores|sockets] to set
+a default cpu binding in case "auto binding" doesn't find a match.
+.RE
+.RS
 
 Supported options include:
 .PD 1
@@ -381,6 +389,7 @@ task/cgroup plugin only.
 .TP
 .B help
 Show help message for cpu_bind
+.RE
 .RE
 
 .TP
@@ -586,11 +595,11 @@ the Epilog parameter in slurm.conf.
 
 
 .TP
-\fB\-\-exclusive\fR
+\fB\-\-exclusive[=user]\fR
 This option has two slightly different meanings for job and job step
 allocations.
 When used to initiate a job, the job allocation cannot share nodes with
-other running jobs.
+other running jobs  (or just other users with the "=user" option).
 The default shared/exclusive behavior depends on system configuration and the
 partition's \fBShared\fR option takes precedence over the job's option.
 
@@ -621,7 +630,7 @@ See \fBEXAMPLE\fR below.
 
 .TP
 \fB\-\-export\fR=<\fIenvironment variables | NONE\fR>
-Identify which environment variables are propagated to the laucnhed application.
+Identify which environment variables are propagated to the launched application.
 Multiple environment variable names should be comma separated.
 Environment variable names may be specified to propagate the current
 value of those variables (e.g. "\-\-export=EDITOR") or specific values
@@ -666,20 +675,21 @@ Display help information and exit.
 
 .TP
 \fB\-\-hint\fR=<\fItype\fR>
-Bind tasks according to application hints
+Bind tasks according to application hints.
 .RS
 .TP
 .B compute_bound
 Select settings for compute bound applications:
-use all cores in each socket, one thread per core
+use all cores in each socket, one thread per core.
 .TP
 .B memory_bound
 Select settings for memory bound applications:
-use only one core in each socket, one thread per core
+use only one core in each socket, one thread per core.
 .TP
 .B [no]multithread
 [don't] use extra threads with in-core multi-threading
-which can benefit communication intensive applications
+which can benefit communication intensive applications.
+Only supported with the task/affinity plugin.
 .TP
 .B help
 show this help message
@@ -777,7 +787,7 @@ Multiple license names should be comma separated (e.g.
 
 .TP
 \fB\-m\fR, \fB\-\-distribution\fR=
-<\fIblock\fR|\fIcyclic\fR|\fIarbitrary\fR|\fIplane=<options>\fR[:\fIblock\fR|\fIcyclic\fR]>[,\fIPack\fR|\fINoPack\fR]
+\fIarbitrary\fR|<\fIblock\fR|\fIcyclic\fR|\fIplane=<options>\fR[:\fIblock\fR|\fIcyclic\fR|\fIfcyclic\fR]>[,\fIPack\fR|\fINoPack\fR]
 
 Specify alternate distribution methods for remote processes.
 This option controls the assignment of tasks to the nodes on which
@@ -786,6 +796,7 @@ to tasks for binding (task affinity). The first distribution
 method (before the ":") controls the distribution of resources across
 nodes. The optional second distribution method (after the ":")
 controls the distribution of resources across sockets within a node.
+
 Note that with select/cons_res, the number of cpus allocated on each
 socket and node may be different. Refer to
 http://slurm.schedmd.com/mc_support.html
@@ -868,14 +879,24 @@ that consecutive tasks share a socket.
 The cyclic distribution method will distribute tasks to sockets such
 that consecutive tasks are distributed over consecutive sockets (in a
 round\-robin fashion).
+Tasks requiring more than one CPU will have all of those CPUs allocated on a
+single socket if possible.
+.TP
+.B fcyclic
+The fcyclic distribution method will distribute tasks to sockets such
+that consecutive tasks are distributed over consecutive sockets (in a
+round\-robin fashion).
+Tasks requiring more than one CPU will have each CPUs allocated in a cyclic
+fashion across sockets.
 .RE
 
 .TP
 \fB\-\-mail\-type\fR=<\fItype\fR>
 Notify user by email when certain event types occur.
 Valid \fItype\fR values are BEGIN, END, FAIL, REQUEUE, ALL (equivalent to
-BEGIN, END, FAIL and REQUEUE), TIME_LIMIT, TIME_LIMIT_90 (reached 90 percent of
-time limit), TIME_LIMIT_80 (reached 80 percent of time limit), and TIME_LIMIT_50
+BEGIN, END, FAIL, REQUEUE, and STAGE_OUT), STAGE_OUT (burst buffer stage out
+completed), TIME_LIMIT, TIME_LIMIT_90 (reached 90 percent of time limit),
+TIME_LIMIT_80 (reached 80 percent of time limit), and TIME_LIMIT_50
 (reached 50 percent of time limit).
 Multiple \fItype\fR values may be specified in a comma separated list.
 The user to be notified is indicated with \fB\-\-mail\-user\fR.
@@ -899,6 +920,8 @@ to the amount of memory allocated to the job, but not remove any of the job's
 memory allocation from being available to other job steps.
 Also see \fB\-\-mem\-per\-cpu\fR.
 \fB\-\-mem\fR and \fB\-\-mem\-per\-cpu\fR are mutually exclusive.
+NOTE: A memory size specification is treated as a special case and grants
+the job access to all of the memory on each node.
 NOTE: Enforcement of memory limits currently relies upon the task/cgroup plugin
 or enabling of accounting, which samples memory use on a periodic basis (data
 need not be stored, just collected). In both cases memory use is based upon
@@ -914,7 +937,7 @@ seen using the \fBscontrol show config\fR command.
 Note that if the job's \fB\-\-mem\-per\-cpu\fR value exceeds the configured
 \fBMaxMemPerCPU\fR, then the user's limit will be treated as a memory limit
 per task; \fB\-\-mem\-per\-cpu\fR will be reduced to a value no larger than
-\fBMaxMemPerCPU\fR; \fB\-\-cpus\-per\-task\fR will be set and value of
+\fBMaxMemPerCPU\fR; \fB\-\-cpus\-per\-task\fR will be set and the value of
 \fB\-\-cpus\-per\-task\fR multiplied by the new \fB\-\-mem\-per\-cpu\fR
 value will equal the original \fB\-\-mem\-per\-cpu\fR value specified by
 the user.
@@ -1333,12 +1356,19 @@ When the job is initiated, the name of the partition used will be placed first
 in the job record partition string.
 
 .TP
+\fB\-\-power\fR=<\fIflags\fR>
+Comma separated list of power management plugin options.
+Currently available flags include:
+level (all nodes allocated to the job should have identical power caps,
+may be disabled by the Slurm configuration option PowerParameters=job_no_level).
+
+.TP
 \fB\-\-priority\fR=<value>
 Request a specific job priority.
 May be subject to configuration specific constraints.
 
 .TP
-\fB\-\-profile\fR=<all|none|[energy[,|task[,|lustre[,|network]]]]>
+\fB\-\-profile\fR=<all|none|[energy[,|task[,|filesystem[,|network]]]]>
 enables detailed data collection by the acct_gather_profile plugin.
 Detailed data are typically time-series that are stored in an HDF5 file for
 the job.
@@ -1513,6 +1543,12 @@ Default value is dependent upon the node's configured CoreSpecCount value.
 If a value of zero is designated and the Slurm configuration option
 AllowSpecResourcesUsage is enabled, the job will be allowed to override
 CoreSpecCount and use the specialized resources on nodes it is allocated.
+This option can not be used with the \fB\-\-thread\-spec\fR option.
+
+.TP
+\fB\-\-sicp\fR
+Identify a job as one which jobs submitted to other clusters can be dependent
+upon.
 
 .TP
 \fB\-\-signal\fR=<\fIsig_num\fR>[@<\fIsig_time\fR>]
@@ -1634,6 +1670,13 @@ allocation, this disables the use of "runjob" to launch tasks. The program
 will be executed directly by the slurmd daemon.
 
 .TP
+\fB\-\-thread\-spec\fR=<\fInum\fR>
+Count of specialized threads per node reserved by the job for system operations
+and not used by the application. The application will not use these threads,
+but will be charged for their allocation.
+This option can not be used with the \fB\-\-core\-spec\fR option.
+
+.TP
 \fB\-\-threads\-per\-core\fR=<\fIthreads\fR>
 Restrict node selection to nodes with at least the specified number of
 threads per core.  NOTE: "Threads" refers to the number of processing units on
@@ -1660,9 +1703,11 @@ Specify a minimum amount of temporary disk space.
 
 .TP
 \fB\-u\fR, \fB\-\-unbuffered\fR
-By default the task launched by srun uses the buffering of its runtime
-environment, e.g. in glibc the stdout is line buffered and stderr is unbuffered.
-This option causes the stdout of the task to be line buffered.
+By default the connection between slurmstepd and the user launched application
+is over a pipe. The stdio output written by the application is buffered
+by the glibc until it is flushed or the output is set as unbuffered.
+See setbuf(3). If this option is specified the tasks are executed with
+a pseudo terminal so that the application output is unbuffered.
 .TP
 \fB\-\-usage\fR
 Display brief help message and exit.
@@ -1702,18 +1747,16 @@ exits with a non\-zero exit code.
 .TP
 \fB\-w\fR, \fB\-\-nodelist\fR=<\fIhost1,host2,...\fR or \fIfilename\fR>
 Request a specific list of hosts.
-Unless constrained by the maximum node count, the job will contain
-\fIall\fR of these hosts.
+The job will contain \fIall\fR of these hosts and possibly additional hosts
+as needed to satisfy resource requirements.
 The list may be specified as a comma\-separated list of hosts, a range of hosts
 (host[1\-5,7,...] for example), or a filename.
 The host list will be assumed to be a filename if it contains a "/" character.
-If you specify a maximum node count and the host list contains more nodes, the
-extra node names will be silently ignored.
 If you specify a minimum node or processor count larger than can be satisfied
 by the supplied host list, additional resources will be allocated on other
 nodes as needed.
 Rather than repeating a host name multiple times, an asterisk and
-a repitition count may be appended to a host name. For example
+a repetition count may be appended to a host name. For example
 "host1,host1" and "host1*2" are equivalent.
 
 .TP
@@ -2166,6 +2209,9 @@ keys so PMI can skip the check for duplicate keys.
 This is the case for MPICH2 and reduces overhead in testing for duplicates
 for improved performance
 .TP
+\fBSLURM_POWER\fR
+Same as \fB\-\-power\fR
+.TP
 \fBSLURM_PROFILE\fR
 Same as \fB\-\-profile\fR
 .TP
@@ -2194,6 +2240,9 @@ Same as \fB\-\-restart\-dir\fR
 .TP
 \fBSLURM_RESV_PORTS\fR
 Same as \fB\-\-resv\-ports\fR
+.TP
+\fBSLURM_SICP\fR
+Same as \fB\-\-sicp\fR
 .TP
 \fBSLURM_SIGNAL\fR
 Same as \fB\-\-signal\fR
@@ -2224,6 +2273,13 @@ Same as \fB\-\-task\-epilog\fR
 .TP
 \fBSLURM_TASK_PROLOG\fR
 Same as \fB\-\-task\-prolog
+.TP
+\fBSLURM_TEST_EXEC\fR
+if defined, then verify existence of the executable program on the local
+computer before attempting to launch it on compute nodes.
+.TP
+\fBSLURM_THREAD_SPEC\fR
+Same as \fB\-\-thread\-spec\fR
 .TP
 \fBSLURM_THREADS\fR
 Same as \fB\-T, \-\-threads\fR
@@ -2682,7 +2738,7 @@ Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
 Copyright (C) 2008\-2010 Lawrence Livermore National Security.
 .br
-Copyright (C) 2010\-2013 SchedMD LLC.
+Copyright (C) 2010\-2015 SchedMD LLC.
 .LP
 This file is part of SLURM, a resource management program.
 For details, see <http://slurm.schedmd.com/>.

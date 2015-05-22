@@ -225,8 +225,13 @@ static int _setup_print_fields_list(List format_list)
 		}else if (!strncasecmp("Energy", object, MAX(command_len, 1))) {
 			field->type = PRINT_USER_ENERGY;
 			field->name = xstrdup("Energy");
-			field->len = 10;
-			field->print_routine = print_fields_int;
+			if (time_format == SLURMDB_REPORT_TIME_SECS_PER
+			   || time_format == SLURMDB_REPORT_TIME_MINS_PER
+			   || time_format == SLURMDB_REPORT_TIME_HOURS_PER)
+				field->len = 18;
+			else
+				field->len = 10;
+			field->print_routine = slurmdb_report_print_time;
 		} else {
 			exit_code=1;
 			fprintf(stderr, " Unknown field '%s'\n", object);
@@ -313,13 +318,48 @@ extern int user_top(int argc, char *argv[])
 	cluster_itr = list_iterator_create(slurmdb_report_cluster_list);
 	while((slurmdb_report_cluster = list_next(cluster_itr))) {
 		int count = 0;
+		uint32_t tres_id = TRES_CPU;
+		slurmdb_tres_rec_t *tres_rec;
+		uint64_t cluster_cpu_alloc_secs = 0,
+			cluster_energy_alloc_secs = 0;
+
+		tres_id = TRES_CPU;
+		if ((tres_rec = list_find_first(
+			     slurmdb_report_cluster->tres_list,
+			     slurmdb_find_tres_in_list,
+			     &tres_id)))
+			cluster_cpu_alloc_secs = tres_rec->alloc_secs;
+
+		tres_id = TRES_ENERGY;
+		if ((tres_rec = list_find_first(
+			     slurmdb_report_cluster->tres_list,
+			     slurmdb_find_tres_in_list,
+			     &tres_id)))
+			cluster_energy_alloc_secs = tres_rec->alloc_secs;
+
 		list_sort(slurmdb_report_cluster->user_list,
 			  (ListCmpF)sort_user_dec);
 
 		itr = list_iterator_create(slurmdb_report_cluster->user_list);
-		while((slurmdb_report_user = list_next(itr))) {
+		while ((slurmdb_report_user = list_next(itr))) {
+			uint64_t cpu_alloc_secs = 0, energy_alloc_secs = 0;
 			int curr_inx = 1;
-			while((field = list_next(itr2))) {
+
+			tres_id = TRES_CPU;
+			if ((tres_rec = list_find_first(
+				     slurmdb_report_user->tres_list,
+				     slurmdb_find_tres_in_list,
+				     &tres_id)))
+				cpu_alloc_secs = tres_rec->alloc_secs;
+
+			tres_id = TRES_ENERGY;
+			if ((tres_rec = list_find_first(
+				     slurmdb_report_user->tres_list,
+				     slurmdb_find_tres_in_list,
+				     &tres_id)))
+				energy_alloc_secs = tres_rec->alloc_secs;
+
+			while ((field = list_next(itr2))) {
 				char *tmp_char = NULL;
 				struct passwd *pwd = NULL;
 				switch(field->type) {
@@ -371,14 +411,15 @@ extern int user_top(int argc, char *argv[])
 				case PRINT_USER_USED:
 					field->print_routine(
 						field,
-						slurmdb_report_user->cpu_secs,
-						slurmdb_report_cluster->cpu_secs,
+						cpu_alloc_secs,
+						cluster_cpu_alloc_secs,
 						(curr_inx == field_count));
 					break;
 				case PRINT_USER_ENERGY:
 					field->print_routine(
 						field,
-						slurmdb_report_user->consumed_energy,
+						energy_alloc_secs,
+						cluster_energy_alloc_secs,
 						(curr_inx ==field_count));
 					break;
 				default:

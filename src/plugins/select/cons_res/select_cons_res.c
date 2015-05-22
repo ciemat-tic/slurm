@@ -164,21 +164,19 @@ uint32_t *cr_node_cores_offset;
  * only load select plugins if the plugin_type string has a
  * prefix of "select/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the node selection API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[] = "Consumable Resources (CR) Node Selection plugin";
 const char plugin_type[] = "select/cons_res";
 const uint32_t plugin_id      = 101;
-const uint32_t plugin_version = 120;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 const uint32_t pstate_version = 7;	/* version control on saved state */
 
 uint16_t cr_type = CR_CPU; /* cr_type is overwritten in init() */
 
 bool     backfill_busy_nodes  = false;
+bool     have_dragonfly       = false;
 bool     pack_serial_at_end   = false;
 bool     preempt_by_qos       = false;
 uint64_t select_debug_flags   = 0;
@@ -1064,7 +1062,7 @@ static int _job_expand(struct job_record *from_job_ptr,
 				}
 			}
 		}
-		if (to_job_ptr->details->whole_node) {
+		if (to_job_ptr->details->whole_node == 1) {
 			to_job_ptr->total_cpus += select_node_record[i].cpus;
 		} else {
 			to_job_ptr->total_cpus += new_job_resrcs_ptr->
@@ -1177,8 +1175,6 @@ static int _rm_job_from_res(struct part_res_record *part_record_ptr,
 		}
 
 		if (action != 2) {
-			if (job->memory_allocated[n] == 0)
-				continue;	/* no memory allocated */
 			if (node_usage[i].alloc_memory <
 			    job->memory_allocated[n]) {
 				error("cons_res: node %s memory is "
@@ -1188,10 +1184,9 @@ static int _rm_job_from_res(struct part_res_record *part_record_ptr,
 				      job->memory_allocated[n],
 				      job_ptr->job_id);
 				node_usage[i].alloc_memory = 0;
-			} else {
+			} else
 				node_usage[i].alloc_memory -=
 					job->memory_allocated[n];
-			}
 		}
 	}
 
@@ -1325,6 +1320,7 @@ static int _rm_job_from_one_node(struct job_record *job_ptr,
 		job->cpus[n] = 0;
 		job->ncpus = build_job_resources_cpu_array(job);
 		clear_job_resources_node(job, n);
+
 		if (node_usage[i].alloc_memory < job->memory_allocated[n]) {
 			error("cons_res: node %s memory is underallocated "
 			      "(%u-%u) for job %u",
@@ -1333,6 +1329,7 @@ static int _rm_job_from_one_node(struct job_record *job_ptr,
 			node_usage[i].alloc_memory = 0;
 		} else
 			node_usage[i].alloc_memory -= job->memory_allocated[n];
+
 		job->memory_allocated[n] = 0;
 		break;
 	}
@@ -1862,10 +1859,17 @@ _compare_support(const void *v, const void *v1)
  */
 extern int init(void)
 {
+	char *topo_param;
+
 	cr_type = slurmctld_conf.select_type_param;
 	if (cr_type)
 		verbose("%s loaded with argument %u", plugin_name, cr_type);
 	select_debug_flags = slurm_get_debug_flags();
+
+	topo_param = slurm_get_topology_param();
+	if (topo_param && strstr(topo_param, "dragonfly"))
+		have_dragonfly = true;
+	xfree(topo_param);
 
 	return SLURM_SUCCESS;
 }
@@ -1999,6 +2003,8 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 
 	for (i = 0; i < select_node_cnt; i++) {
 		select_node_record[i].node_ptr = &node_ptr[i];
+		select_node_record[i].mem_spec_limit = node_ptr[i].
+						       mem_spec_limit;
 		if (select_fast_schedule) {
 			struct config_record *config_ptr;
 			config_ptr = node_ptr[i].config_ptr;
@@ -2006,6 +2012,7 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 			select_node_record[i].boards  = config_ptr->boards;
 			select_node_record[i].sockets = config_ptr->sockets;
 			select_node_record[i].cores   = config_ptr->cores;
+			select_node_record[i].threads = config_ptr->threads;
 			select_node_record[i].vpus    = config_ptr->threads;
 			select_node_record[i].real_memory = config_ptr->
 				real_memory;
@@ -2014,11 +2021,13 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 			select_node_record[i].boards  = node_ptr[i].boards;
 			select_node_record[i].sockets = node_ptr[i].sockets;
 			select_node_record[i].cores   = node_ptr[i].cores;
+			select_node_record[i].threads = node_ptr[i].threads;
 			select_node_record[i].vpus    = node_ptr[i].threads;
 			select_node_record[i].real_memory = node_ptr[i].
 				real_memory;
 		}
-		tot_core = select_node_record[i].sockets *
+		tot_core = select_node_record[i].boards  *
+			   select_node_record[i].sockets *
 			   select_node_record[i].cores;
 		if (tot_core >= select_node_record[i].cpus)
 			select_node_record[i].vpus = 1;
@@ -2093,7 +2102,7 @@ extern int select_p_job_test(struct job_record *job_ptr, bitstr_t * bitmap,
 	if (slurm_get_use_spec_resources() == 0)
 		job_ptr->details->core_spec = (uint16_t) NO_VAL;
 	if ((job_ptr->details->core_spec != (uint16_t) NO_VAL) &&
-	    (job_ptr->details->whole_node == 0)) {
+	    (job_ptr->details->whole_node != 1)) {
 		info("Setting Exclusive mode for job %u with CoreSpec=%u",
 		      job_ptr->job_id, job_ptr->details->core_spec);
 		job_ptr->details->whole_node = 1;
@@ -2581,6 +2590,8 @@ extern int select_p_update_node_config (int index)
 
 	select_node_record[index].real_memory = select_node_record[index].
 		node_ptr->real_memory;
+	select_node_record[index].mem_spec_limit = select_node_record[index].
+		node_ptr->mem_spec_limit;
 	return SLURM_SUCCESS;
 }
 

@@ -287,6 +287,12 @@ static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 		mlb = mls;
 	xcgroup_set_uint64_param (cg, "memory.limit_in_bytes", mlb);
 
+	/*
+	 * Also constrain kernel memory (if available).
+	 * See https://lwn.net/Articles/516529/
+	 */
+	xcgroup_set_uint64_param (cg, "memory.kmem.limit_in_bytes", mlb);
+
 	/* this limit has to be set only if ConstrainSwapSpace is set to yes */
 	if ( constrain_swap_space ) {
 		xcgroup_set_uint64_param (cg, "memory.memsw.limit_in_bytes",
@@ -348,7 +354,7 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	if (*jobstep_cgroup_path == '\0') {
 		int cc;
 
-		if (stepid == NO_VAL) {
+		if (stepid == SLURM_BATCH_SCRIPT) {
 			cc = snprintf(jobstep_cgroup_path, PATH_MAX,
 				      "%s/step_batch", job_cgroup_path);
 			if (cc >= PATH_MAX) {
@@ -356,7 +362,14 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 				      "step batch memory cg path : %m");
 
 			}
+		} else if (stepid == SLURM_EXTERN_CONT) {
+			cc = snprintf(jobstep_cgroup_path, PATH_MAX,
+				      "%s/step_extern", job_cgroup_path);
+			if (cc >= PATH_MAX) {
+				error("task/cgroup: unable to build "
+				      "step extern memory cg path : %m");
 
+			}
 		} else {
 			if (snprintf(jobstep_cgroup_path, PATH_MAX, "%s/step_%u",
 				     job_cgroup_path,stepid) >= PATH_MAX) {
@@ -496,24 +509,25 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 			 * them the same */
 			if (failcnt_non_zero(&step_memory_cg,
 					     "memory.memsw.failcnt"))
-				error("Exceeded step memory limit at some "
-				      "point. oom-killer likely killed a "
-				      "process.");
-			else if(failcnt_non_zero(&step_memory_cg,
-						 "memory.failcnt"))
-				error("Exceeded step memory limit at some "
-				      "point. Step may have been partially "
-				      "swapped out to disk.");
+				/* reports the number of times that the
+				 * memory plus swap space limit has
+				 * reached the value set in
+				 * memory.memsw.limit_in_bytes.
+				 */
+				info("Exceeded step memory limit at some point.");
+			else if (failcnt_non_zero(&step_memory_cg,
+						  "memory.failcnt"))
+				/* reports the number of times that the
+				 * memory limit has reached the value set
+				 * in memory.limit_in_bytes.
+				 */
+				info("Exceeded step memory limit at some point.");
 			if (failcnt_non_zero(&job_memory_cg,
 					     "memory.memsw.failcnt"))
-				error("Exceeded job memory limit at some "
-				      "point. oom-killer likely killed a "
-				      "process.");
+				info("Exceeded job memory limit at some point.");
 			else if (failcnt_non_zero(&job_memory_cg,
 						  "memory.failcnt"))
-				error("Exceeded job memory limit at some "
-				      "point. Job may have been partially "
-				      "swapped out to disk.");
+				info("Exceeded job memory limit at some point.");
 			xcgroup_unlock(&memory_cg);
 		} else
 			error("task/cgroup task_cgroup_memory_check_oom: "

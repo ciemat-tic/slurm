@@ -73,8 +73,9 @@
 #include <math.h>
 #include "slurm/slurm_errno.h"
 
-#include "src/common/xstring.h"
 #include "src/common/parse_time.h"
+#include "src/common/slurm_time.h"
+#include "src/common/xstring.h"
 
 #include "fair_tree.h"
 
@@ -125,16 +126,12 @@ slurm_ctl_conf_t slurmctld_conf;
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobcomp/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job completion logging API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]	= "Priority MULTIFACTOR plugin";
 const char plugin_type[]	= "priority/multifactor";
-const uint32_t plugin_version	= 100;
+const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 static pthread_t decay_handler_thread;
 static pthread_t cleanup_handler_thread;
@@ -176,8 +173,8 @@ static int _apply_decay(double real_decay)
 	ListIterator itr = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
-	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK,
-				   WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK };
 
 	/* continue if real_decay is 0 or 1 since that doesn't help
 	   us at all. 1 means no decay and 0 will just zero
@@ -223,8 +220,8 @@ static int _reset_usage(void)
 	ListIterator itr = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
-	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK,
-				   WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 
 	if (!calc_fairshare)
 		return SLURM_SUCCESS;
@@ -517,8 +514,8 @@ static double _get_fairshare_priority(struct job_record *job_ptr)
 		(slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
 	slurmdb_assoc_rec_t *fs_assoc = NULL;
 	double priority_fs = 0.0;
-	assoc_mgr_lock_t locks = { READ_LOCK, NO_LOCK,
-				   NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	assoc_mgr_lock_t locks = { READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK };
 
 	if (!calc_fairshare)
 		return 0;
@@ -743,7 +740,7 @@ static time_t _next_reset(uint16_t reset_period, time_t last_reset)
 	struct tm last_tm;
 	time_t tmp_time, now = time(NULL);
 
-	if (localtime_r(&last_reset, &last_tm) == NULL)
+	if (slurm_localtime_r(&last_reset, &last_tm) == NULL)
 		return (time_t) 0;
 
 	last_tm.tm_sec   = 0;
@@ -754,13 +751,13 @@ static time_t _next_reset(uint16_t reset_period, time_t last_reset)
 	last_tm.tm_isdst = -1;
 	switch (reset_period) {
 	case PRIORITY_RESET_DAILY:
-		tmp_time = mktime(&last_tm);
+		tmp_time = slurm_mktime(&last_tm);
 		tmp_time += SECS_PER_DAY;
 		while ((tmp_time + SECS_PER_DAY) < now)
 			tmp_time += SECS_PER_DAY;
 		return tmp_time;
 	case PRIORITY_RESET_WEEKLY:
-		tmp_time = mktime(&last_tm);
+		tmp_time = slurm_mktime(&last_tm);
 		tmp_time += (SECS_PER_DAY * (7 - last_tm.tm_wday));
 		while ((tmp_time + SECS_PER_WEEK) < now)
 			tmp_time += SECS_PER_WEEK;
@@ -795,7 +792,7 @@ static time_t _next_reset(uint16_t reset_period, time_t last_reset)
 	default:
 		return (time_t) 0;
 	}
-	return mktime(&last_tm);
+	return slurm_mktime(&last_tm);
 }
 
 /*
@@ -813,8 +810,8 @@ static void _init_grp_used_cpu_run_secs(time_t last_ran)
 {
 	struct job_record *job_ptr = NULL;
 	ListIterator itr;
-	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK,
-				   WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK };
 	slurmctld_lock_t job_read_lock =
 		{ NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
 	uint64_t delta;
@@ -909,8 +906,8 @@ static int _apply_new_usage(struct job_record *job_ptr,
 	double run_delta = 0.0, run_decay = 0.0, real_decay = 0.0;
 	uint64_t cpu_run_delta = 0;
 	uint64_t job_time_limit_ends = 0;
-	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK,
-				   WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK };
 
 	/* Even if job_ptr->qos_ptr->usage_factor is 0 we need to
 	 * handle other non-usage variables here
@@ -1051,8 +1048,8 @@ static int _apply_new_usage(struct job_record *job_ptr,
 
 static void _ticket_based_decay(List job_list, time_t start_time)
 {
-	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK,
-				   NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK };
 	slurmctld_lock_t job_write_lock =
 		{ NO_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK };
 	ListIterator itr = NULL;
@@ -1136,14 +1133,19 @@ static void _ticket_based_decay(List job_list, time_t start_time)
 }
 
 
-static void _decay_apply_new_usage_and_weighted_factors(
+static int _decay_apply_new_usage_and_weighted_factors(
 	struct job_record *job_ptr,
 	time_t *start_time_ptr)
 {
+	/* Always return SUCCESS so that list_for_each will
+	 * continue processing list of jobs. */
+
 	if (!decay_apply_new_usage(job_ptr, start_time_ptr))
-		return;
+		return SLURM_SUCCESS;
 
 	decay_apply_weighted_factors(job_ptr, start_time_ptr);
+
+	return SLURM_SUCCESS;
 }
 
 
@@ -1162,8 +1164,8 @@ static void *_decay_thread(void *no_data)
 	/* Write lock on jobs, read lock on nodes and partitions */
 	slurmctld_lock_t job_write_lock =
 		{ NO_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK };
-	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK,
-				   NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK };
 
 #if HAVE_SYS_PRCTL_H
 	if (prctl(PR_SET_NAME, "slurmctld_decay", NULL, NULL, NULL) < 0) {
@@ -1671,9 +1673,8 @@ extern uint32_t priority_p_set(uint32_t last_prio, struct job_record *job_ptr)
 
 extern void priority_p_reconfig(bool assoc_clear)
 {
-	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK,
-				   NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
-
+	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK,
+				   NO_LOCK, NO_LOCK, NO_LOCK };
 
 	reconfig = 1;
 	prevflags = flags;
@@ -1866,9 +1867,12 @@ extern bool decay_apply_new_usage(struct job_record *job_ptr,
 }
 
 
-extern void decay_apply_weighted_factors(struct job_record *job_ptr,
+extern int decay_apply_weighted_factors(struct job_record *job_ptr,
 					 time_t *start_time_ptr)
 {
+	/* Always return SUCCESS so that list_for_each will
+	 * continue processing list of jobs. */
+
 	/*
 	 * Priority 0 is reserved for held
 	 * jobs. Also skip priority
@@ -1877,13 +1881,14 @@ extern void decay_apply_weighted_factors(struct job_record *job_ptr,
 	if ((job_ptr->priority == 0) ||
 	    (!IS_JOB_PENDING(job_ptr) &&
 	     !(flags & PRIORITY_FLAGS_CALCULATE_RUNNING)))
-		return;
+		return SLURM_SUCCESS;
 
 	job_ptr->priority = _get_priority_internal(*start_time_ptr, job_ptr);
 	last_job_update = time(NULL);
 	debug2("priority for job %u is now %u",
 	       job_ptr->job_id, job_ptr->priority);
 
+	return SLURM_SUCCESS;
 }
 
 

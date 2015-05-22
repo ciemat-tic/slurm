@@ -165,7 +165,8 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 				limit_str, sizeof(limit_str));
 	if (job_step_ptr->array_job_id) {
 		if (job_step_ptr->step_id == INFINITE) {	/* Pending */
-			snprintf(tmp_line, sizeof(tmp_line), "StepId=%u_%u.TBD ",
+			snprintf(tmp_line, sizeof(tmp_line),
+				 "StepId=%u_%u.TBD ",
 				 job_step_ptr->array_job_id,
 				 job_step_ptr->array_task_id);
 		} else {
@@ -254,6 +255,15 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 		xstrcat(out, "\n   ");
 
 	/****** Line 4 ******/
+	snprintf(tmp_line, sizeof(tmp_line), "TRES=%s",
+		 job_step_ptr->tres_alloc_str);
+	xstrcat(out, tmp_line);
+	if (one_liner)
+		xstrcat(out, " ");
+	else
+		xstrcat(out, "\n   ");
+
+	/****** Line 5 ******/
 	snprintf(tmp_line, sizeof(tmp_line),
 		"ResvPorts=%s Checkpoint=%u CheckpointDir=%s",
 		 job_step_ptr->resv_ports,
@@ -264,7 +274,7 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 	else
 		xstrcat(out, "\n   ");
 
-	/****** Line 5 ******/
+	/****** Line 6 ******/
 	if (cpu_freq_debug(NULL, NULL, tmp_line, sizeof(tmp_line),
 			   job_step_ptr->cpu_freq_gov,
 			   job_step_ptr->cpu_freq_min,

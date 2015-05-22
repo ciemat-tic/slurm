@@ -50,8 +50,8 @@
 #include "slurm/slurm.h"
 #include "src/common/bitstring.h"
 #include "src/common/slurm_resource_info.h"
+#include "src/common/xcgroup_read_config.h"
 #include "src/common/xstring.h"
-#include "src/slurmd/common/xcgroup_read_config.h"
 #include "src/slurmd/common/xcgroup.h"
 #include "src/slurmd/common/slurmd_cgroup.h"
 #include "src/slurmd/slurmd/slurmd.h"
@@ -438,6 +438,13 @@ extern int set_system_cgroup_mem_limit(uint32_t mem_spec_limit)
 	return SLURM_SUCCESS;
 }
 
+extern int disable_system_cgroup_mem_oom()
+{
+	/* 1: disables the oom killer */
+	return xcgroup_set_uint64_param(&system_memory_cg, "memory.oom_control",
+					1);
+}
+
 extern int attach_system_cpuset_pid(pid_t pid)
 {
 	if (xcgroup_add_pids(&system_cpuset_cg, &pid, 1) != XCGROUP_SUCCESS)
@@ -460,8 +467,8 @@ extern bool check_cgroup_job_confinement(void)
 	if (read_slurm_cgroup_conf(&slurm_cgroup_conf))
 		return FALSE;
 	task_plugin_type = slurm_get_task_plugin();
-	if (!strncmp(task_plugin_type,"task/cgroup", 11) &&
-	    slurm_cgroup_conf.constrain_cores)
+	if (slurm_cgroup_conf.constrain_cores &&
+	    strstr(task_plugin_type, "cgroup"))
 		status = TRUE;
 	xfree(task_plugin_type);
 	free_slurm_cgroup_conf(&slurm_cgroup_conf);

@@ -1,8 +1,8 @@
 /*****************************************************************************\
  *  proc_args.c - helper functions for command argument processing
- *  $Id: opt.h 11996 2007-08-10 20:36:26Z jette $
  *****************************************************************************
  *  Copyright (C) 2007 Hewlett-Packard Development Company, L.P.
+ *  Portions Copyright (C) 2010-2015 SchedMD LLC <http://www.schedmd.com>.
  *  Written by Christopher Holmes <cholmes@hp.com>, who borrowed heavily
  *  from existing SLURM source code, particularly src/srun/opt.c
  *
@@ -759,7 +759,9 @@ uint16_t parse_mail_type(const char *arg)
 			rc |= MAIL_JOB_REQUEUE;
 		else if (strcasecmp(tok, "ALL") == 0)
 			rc |= MAIL_JOB_BEGIN |  MAIL_JOB_END |  MAIL_JOB_FAIL |
-			      MAIL_JOB_REQUEUE;
+			      MAIL_JOB_REQUEUE | MAIL_JOB_STAGE_OUT;
+		else if (!strcasecmp(tok, "STAGE_OUT"))
+			rc |= MAIL_JOB_STAGE_OUT;
 		else if (strcasecmp(tok, "TIME_LIMIT") == 0)
 			rc |= MAIL_JOB_TIME100;
 		else if (strcasecmp(tok, "TIME_LIMIT_90") == 0)
@@ -802,6 +804,11 @@ char *print_mail_type(const uint16_t type)
 		if (buf[0])
 			strcat(buf, ",");
 		strcat(buf, "REQUEUE");
+	}
+	if (type & MAIL_JOB_STAGE_OUT) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "STAGE_OUT");
 	}
 	if (type & MAIL_JOB_TIME50) {
 		if (buf[0])
@@ -867,8 +874,17 @@ _create_path_list(void)
 	return l;
 }
 
-char *
-search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode)
+/*
+ * search PATH to confirm the location and access mode of the given command
+ * IN cwd - current working directory
+ * IN cmd - command to execute
+ * IN check_current_dir - if true, search cwd for the command
+ * IN access_mode - required access rights of cmd
+ * IN test_exec - if false, do not confirm access mode of cmd if full path
+ * RET full path of cmd or NULL if not found
+ */
+char *search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode,
+		  bool test_exec)
 {
 	List         l        = NULL;
 	ListIterator i        = NULL;
@@ -876,16 +892,22 @@ search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode)
 
 #if defined HAVE_BG && !defined HAVE_BG_L_P
 	/* BGQ's runjob command required a fully qualified path */
-	if ( (cmd[0] == '.' || cmd[0] == '/') &&
-	     (access(cmd, access_mode) == 0 ) ) {
+	if (((cmd[0] == '.') || (cmd[0] == '/')) &&
+	    (access(cmd, access_mode) == 0)) {
 		if (cmd[0] == '.')
 			xstrfmtcat(fullpath, "%s/", cwd);
 		xstrcat(fullpath, cmd);
 		goto done;
 	}
 #else
-	if ((cmd[0] == '.') || (cmd[0] == '/'))
-		return NULL;
+	if ((cmd[0] == '.') || (cmd[0] == '/')) {
+		if (test_exec && (access(cmd, access_mode) == 0)) {
+			if (cmd[0] == '.')
+				xstrfmtcat(fullpath, "%s/", cwd);
+			xstrcat(fullpath, cmd);
+		}
+		goto done;
+	}
 #endif
 
 	l = _create_path_list();
@@ -903,7 +925,6 @@ search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode)
 			goto done;
 
 		xfree(fullpath);
-		fullpath = NULL;
 	}
   done:
 	if (l)

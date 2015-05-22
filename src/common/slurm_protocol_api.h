@@ -206,6 +206,13 @@ char *slurm_get_mpi_default(void);
  */
 char *slurm_get_mpi_params(void);
 
+/* slurm_get_msg_aggr_params
+ * get message aggregation parameters value from slurmctld_conf object
+ * RET char *   - msg aggregation parameters default value from slurm.conf,
+ *                MUST be xfreed by caller
+ */
+char *slurm_get_msg_aggr_params(void);
+
 /* slurm_get_msg_timeout
  * get default message timeout value from slurmctld_conf object
  */
@@ -434,6 +441,12 @@ extern char *slurm_get_power_plugin(void);
  */
 extern uint16_t slurm_get_track_wckey(void);
 
+/* slurm_get_topology_param
+ * returns the value of topology_param in slurmctld_conf object
+ * RET char *    - topology parameters, MUST be xfreed by caller
+ */
+extern char * slurm_get_topology_param(void);
+
 /* slurm_get_topology_plugin
  * returns the value of topology_plugin in slurmctld_conf object
  * RET char *    - topology type, MUST be xfreed by caller
@@ -461,6 +474,12 @@ extern uint16_t slurm_get_vsize_factor(void);
  * RET char *    - accounting storage type,  MUST be xfreed by caller
  */
 char *slurm_get_accounting_storage_type(void);
+
+/* slurm_get_accounting_storage_tres
+ * returns the accounting storage tres from slurmctld_conf object
+ * RET char *    - accounting storage tres,  MUST be xfreed by caller
+ */
+char *slurm_get_accounting_storage_tres(void);
 
 /* slurm_get_accounting_storage_user
  * returns the storage user from slurmctld_conf object
@@ -531,6 +550,12 @@ uint32_t slurm_get_accounting_storage_port(void);
  * RET 0 or error code
  */
 int slurm_set_accounting_storage_port(uint32_t storage_port);
+
+/* slurm_get_launch_params
+ * get launch_params from slurmctld_conf object
+ * RET char *   - launch_params, MUST be xfreed by caller
+ */
+char *slurm_get_launch_params(void);
 
 /* slurm_get_launch_type
  * get launch_type from slurmctld_conf object
@@ -785,7 +810,7 @@ char *slurm_get_task_prolog(void);
 char *slurm_get_task_plugin(void);
 
 /* slurm_get_task_plugin_param */
-uint16_t slurm_get_task_plugin_param(void);
+uint32_t slurm_get_task_plugin_param(void);
 
 /* Get SchedulerTimeSlice (secs) */
 uint16_t slurm_get_time_slice(void);
@@ -812,6 +837,12 @@ char *slurm_get_layouts(void);
  * Return the eio timeout for srun.
  */
 int16_t slurm_get_srun_eio_timeout(void);
+
+/* slurm_get_prolog_timeout()
+ *
+ * Return the timeout used for prolog/epilog
+ */
+extern uint16_t slurm_get_prolog_timeout(void);
 
 /**********************************************************************\
  * general message management functions used by slurmctld, slurmd
@@ -1205,6 +1236,6 @@ extern int slurm_job_step_create (
  * RET: error code
  */
 extern int slurm_forward_data(char *nodelist, char *address, uint32_t len,
-	char *data);
+			      char *data);
 
 #endif

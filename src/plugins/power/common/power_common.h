@@ -41,21 +41,37 @@
 #ifndef __POWER_COMMON_H__
 #define __POWER_COMMON_H__
 
+#include "slurm/slurm.h"
 #include "src/common/list.h"
 #include "src/common/pack.h"
-#include "slurm/slurm.h"
+#include "src/slurmctld/slurmctld.h"
 
 typedef struct power_by_job {
 	uint32_t job_id;	/* Running Job ID */
+	time_t   start_time;	/* When job allocation started */
 	uint32_t alloc_watts;	/* Currently allocated power, in watts */
 	uint32_t used_watts;	/* Recent power use rate, in watts */
 } power_by_job_t;
+
+typedef struct power_by_nodes {
+	uint32_t alloc_watts;	/* Currently allocated power, in watts */
+	bool increase_power;	/* Set if node's power allocation increasing */
+	char *nodes;		/* Node names (nid range list values on Cray) */
+} power_by_nodes_t;
+
+/* For all nodes in a cluster
+ * 1) set default values and
+ * 2) return global power allocation/consumption information */
+extern void get_cluster_power(struct node_record *node_record_table_ptr,
+			      int node_record_count,
+			      uint32_t *alloc_watts, uint32_t *used_watts);
 
 /* For each running job, return power allocation/use information in a List
  * containing elements of type power_by_job_t.
  * NOTE: Job data structure must be locked on function entry
  * NOTE: Call list_delete() to free return value */
-extern List get_job_power(List job_list);
+extern List get_job_power(List job_list,
+			  struct node_record *node_record_table_ptr);
 
 /* Execute a script, wait for termination and return its stdout.
  * script_name IN - Name of program being run (e.g. "StartStageIn")
@@ -63,9 +79,16 @@ extern List get_job_power(List job_list);
  * script_args IN - Arguments to the script
  * max_wait IN - Maximum time to wait in milliseconds,
  *		 -1 for no limit (asynchronous)
+ * data_in IN - data to use as program STDIN (NULL if not STDIN)
  * status OUT - Job exit code
  * Return stdout+stderr of spawned program, value must be xfreed. */
 extern char *power_run_script(char *script_name, char *script_path,
-			      char **script_argv, int max_wait, int *status);
+			      char **script_argv, int max_wait, char *data_in,
+			      int *status);
+
+/* For a newly starting job, set "new_job_time" in each of it's nodes
+ * NOTE: The job and node data structures must be locked on function entry */
+extern void set_node_new_job(struct job_record *job_ptr,
+			     struct node_record *node_record_table_ptr);
 
 #endif	/* __POWER_COMMON_H__ */
