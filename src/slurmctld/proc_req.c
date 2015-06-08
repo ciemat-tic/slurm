@@ -4318,6 +4318,9 @@ inline static void  _slurm_rpc_checkpoint(slurm_msg_t * msg)
 	case CHECK_VACATE:
 		op = "vacate";
 		break;
+	case CHECK_MIGRATE:
+		op = "migrate";
+		break;
 	default:
 		op = "unknown";
 	}
@@ -4326,7 +4329,7 @@ inline static void  _slurm_rpc_checkpoint(slurm_msg_t * msg)
 
 	/* do RPC call and send reply */
 	lock_slurmctld(job_write_lock);
-	if (ckpt_ptr->op == CHECK_RESTART) {
+	if ((ckpt_ptr->op == CHECK_RESTART) || (ckpt_ptr->op == CHECK_MIGRATE))  {
 		error_code = job_restart(ckpt_ptr, uid, msg->conn_fd,
 					 msg->protocol_version);
 	} else if (ckpt_ptr->step_id == SLURM_BATCH_SCRIPT) {
@@ -4363,6 +4366,18 @@ inline static void  _slurm_rpc_checkpoint(slurm_msg_t * msg)
 			schedule_job_save();
 		}
 	}
+
+	//this should avoy the enourmous overhead on migrations
+	//NOTE: IT DOESNT. I'll leave it here anyway until problem is solved
+	if (ckpt_ptr->op == CHECK_MIGRATE)	{
+		//now = time(NULL);
+		//last_purge_job_time = now; this should be updated in controller.c to avoid to many purges (and reduce overhead)
+		debug2("Purging old records for migration");
+		lock_slurmctld(job_write_lock);
+		purge_old_job();
+		unlock_slurmctld(job_write_lock);
+	}
+
 }
 
 inline static void  _slurm_rpc_checkpoint_comp(slurm_msg_t * msg)

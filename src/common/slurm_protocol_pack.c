@@ -11823,7 +11823,7 @@ _pack_checkpoint_msg(checkpoint_msg_t *msg, Buf buffer,
 	pack32(msg->job_id,  buffer ) ;
 	pack32(msg->step_id, buffer ) ;
 	packstr((char *)msg->image_dir, buffer ) ;
-	packstr((char *)msg->nodeList, buffer ) ;
+	packstr((char *)msg->destination_nodes, buffer ) ;
 
 }
 
@@ -11843,7 +11843,7 @@ _unpack_checkpoint_msg(checkpoint_msg_t **msg_ptr, Buf buffer,
 	safe_unpack32(&msg->job_id, buffer ) ;
 	safe_unpack32(&msg->step_id, buffer ) ;
 	safe_unpackstr_xmalloc(&msg->image_dir, &uint32_tmp, buffer ) ;
-	safe_unpackstr_xmalloc(&msg->nodeList, &uint32_tmp, buffer ) ;
+	safe_unpackstr_xmalloc(&msg->destination_nodes, &uint32_tmp, buffer ) ;
 
 	return SLURM_SUCCESS;
 

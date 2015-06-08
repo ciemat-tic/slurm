@@ -978,7 +978,7 @@ typedef struct checkpoint_msg {
 	uint32_t step_id;	/* slurm step_id */
 	char *image_dir;	/* locate to store the context images.
 				 * NULL for default */
-	char *nodeList;		/* list of nodes to restart the checkpoint on
+	char* destination_nodes; /* nodes where the checkpoint will be restarted.
 				 * NULL for default */
 } checkpoint_msg_t;
 

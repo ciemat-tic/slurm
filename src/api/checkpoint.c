@@ -61,7 +61,7 @@
 static int _handle_rc_msg(slurm_msg_t *msg);
 static int _checkpoint_op (uint16_t op, uint16_t data,
 			   uint32_t job_id, uint32_t step_id,
-			   char *image_dir, ...);
+			   char *image_dir);
 /*
  * _checkpoint_op - perform many checkpoint operation for some job step.
  * IN op        - operation to perform
@@ -73,41 +73,11 @@ static int _checkpoint_op (uint16_t op, uint16_t data,
  */
 static int _checkpoint_op (uint16_t op, uint16_t data,
 			   uint32_t job_id, uint32_t step_id,
-			   char *image_dir, ...)
+			   char *image_dir)
 {
 	int rc;
 	checkpoint_msg_t ckp_req;
 	slurm_msg_t req_msg;
-
-	printf( "we are in _checkpoint_op1\n");
-	/* esto pa cuando funcione lo de los parametros*/
-	char destinationNodes[99] = ""; //TODO max size should be set somehow
-	if (op == CHECK_RESTART){
-		printf( "we are in _checkpoint_op2\n");
-
-		va_list arguments;
-		va_start ( arguments, image_dir );
-		char* nodeName = "";
-
-		while (true){
-			nodeName = va_arg(arguments, char* );
-			if (nodeName != NULL) {
-				if (destinationNodes != "")
-					strcat(destinationNodes, ",");  //TODO Is it possible to concat on the first iteration, when DestinationNodes is NULL?
-			strcat(destinationNodes, nodeName);
-
-			}
-		}
-		printf( "we are in _checkpoint_op3\n");
-
-
-	}
-
-	printf ("destinationNodes vale %s\n", destinationNodes);
-
-	//TODO No funciona lo de los parametros variables
-//	char destinationNodes[99] = "tecno6-1";
-	printf( "we are in _checkpoint_op4\n");
 
 
 	slurm_msg_t_init(&req_msg);
@@ -116,17 +86,55 @@ static int _checkpoint_op (uint16_t op, uint16_t data,
 	ckp_req.job_id    = job_id;
 	ckp_req.step_id   = step_id;
 	ckp_req.image_dir = image_dir;
-	ckp_req.nodeList  = destinationNodes;
+	ckp_req.destination_nodes = NULL;
 	req_msg.msg_type  = REQUEST_CHECKPOINT;
 	req_msg.data      = &ckp_req;
 
 	if (slurm_send_recv_controller_rc_msg(&req_msg, &rc) < 0)
 		return SLURM_ERROR;
-	printf( "we are in _checkpoint_op5\n");
 
 	slurm_seterrno(rc);
 	return rc;
 }
+
+
+/*
+ * _migrate_op - Migration operation. Just like checkpoint, but allows to specify destination nodes
+ * IN op        - operation to perform
+ * IN job_id    - job on which to perform operation
+ * IN step_id   - job step on which to perform operation
+ * IN destination_nodes - destination nodes
+ * IN image_dir - directory used to get/put checkpoint images
+ * RET 0 or a slurm error code
+ */
+
+static int _migrate_op (uint16_t op,
+			   uint32_t job_id, uint32_t step_id,
+			   char *destination_nodes,
+			   char *image_dir)
+{
+	int rc;
+	checkpoint_msg_t ckp_req;
+	slurm_msg_t req_msg;
+
+
+	slurm_msg_t_init(&req_msg);
+	ckp_req.op        = op;
+	ckp_req.data      = 0;
+	ckp_req.job_id    = job_id;
+	ckp_req.step_id   = step_id;
+	ckp_req.image_dir = image_dir;
+	ckp_req.destination_nodes = destination_nodes;
+	req_msg.msg_type  = REQUEST_CHECKPOINT;
+	req_msg.data      = &ckp_req;
+
+	if (slurm_send_recv_controller_rc_msg(&req_msg, &rc) < 0)
+		return SLURM_ERROR;
+
+	slurm_seterrno(rc);
+	return rc;
+}
+
 
 /*
  * slurm_checkpoint_able - determine if the specified job step can presently
@@ -239,7 +247,6 @@ extern int slurm_checkpoint_requeue (uint32_t job_id, uint16_t max_wait,
 extern int slurm_checkpoint_vacate (uint32_t job_id, uint32_t step_id,
 		uint16_t max_wait, char *image_dir)
 {
-	printf("I am in slurm_checkpoint_vacate\n");
 	return _checkpoint_op (CHECK_VACATE, max_wait, job_id, step_id,
 			       image_dir);
 }
@@ -251,49 +258,30 @@ extern int slurm_checkpoint_vacate (uint32_t job_id, uint32_t step_id,
  * RET 0 or a slurm error code
  */
 
-double average ( int num, ... )
+extern int slurm_checkpoint_restart (uint32_t job_id, uint32_t step_id,
+				     uint16_t stick, char *image_dir)
 {
-    va_list arguments;
-    double sum = 0;
-
-    /* Initializing arguments to store all values after num */
-    va_start ( arguments, num );
-    /* Sum all the inputs; we still rely on the function caller to tell us how
-     * many there are */
-    int x = 0;
-
-    for ( x = 0; x < num; x++ )
-    {
-        sum += va_arg ( arguments, double );
-    }
-    va_end ( arguments );                  // Cleans up the list
-
-    return sum / num;
+	return _checkpoint_op (CHECK_RESTART, stick, job_id, step_id, image_dir);
 }
 
 
-extern int slurm_checkpoint_restart (uint32_t job_id, uint32_t step_id, uint16_t stick, char *image_dir,  ...)
+/*
+ * slurm_checkpoint_migrate - migrate a job after it has been checkpointed.
+ * IN job_id  - job on which to perform operation
+ * IN step_id - job step on which to perform operation
+ * IN destination_nodes: nodes where the job will be restarted. AT THIS MOMENT, ONLY SERIAL JOBS (1 NODE) ARE SUPPORTED
+ * IN image_dir - directory to find checkpoint image files
+ * RET 0 or a slurm error code
+ */
+extern int slurm_checkpoint_migrate (uint32_t job_id, uint32_t step_id, 
+				     char* destination_nodes, char *image_dir)
 {
 
-	//TODO aqui falta lo de los parametros variables
-
-    printf("I am in slurm_checkpoint_restart");
-
-	va_list arguments;
-    va_start ( arguments, image_dir );
-    char* nodeNames = "";
-
-    printf("Start printing node arguments");
-
-    while (nodeNames != NULL) {
-    	nodeNames = va_arg(arguments, char* );
-    	printf(nodeNames);
-    }
-
-    printf("That are all my node arguments");
-
-	return _checkpoint_op (CHECK_RESTART, stick, job_id, step_id, image_dir, nodeNames);
+	return _migrate_op (CHECK_MIGRATE, job_id, step_id, destination_nodes, image_dir);
 }
+
+
+
 
 /*
  * slurm_checkpoint_complete - note the completion of a job step's checkpoint

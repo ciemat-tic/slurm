@@ -14284,25 +14284,16 @@ extern int job_restart(checkpoint_msg_t *ckpt_ptr, uid_t uid, slurm_fd_t conn_fd
 		goto unpack_error;
 	}
 
+
 	if (ckpt_ptr->data == 1) { /* stick to nodes */
 		xfree(job_desc->req_nodes);
 		job_desc->req_nodes = alloc_nodes;
 		alloc_nodes = NULL;	/* Nothing left to xfree */
 	}
 
-	/*
-	 * MANUEL
-	 */
-
-	if (ckpt_ptr->nodeList != NULL){
-		job_desc->req_nodes = ckpt_ptr->nodeList;
-		printf("HEIEHEIEIE hemos puesto un valor en job_desc->req_nodes\n");
+	if (ckpt_ptr->destination_nodes != NULL){
+		job_desc->req_nodes = ckpt_ptr->destination_nodes;
 	}
-	else {
-		printf ("IN job_mgr-job_restart, We have detected that ckpt_ptr->nodeList is NULL. \n");
-
-	}
-
 
 	/* set open mode to append */
 	job_desc->open_mode = OPEN_MODE_APPEND;

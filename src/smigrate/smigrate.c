@@ -62,11 +62,16 @@
 
 #include "src/smigrate/opt.h"
 
+
+
+
+
 #define MAX_RETRIES 15
 
 static void  _set_exit_code(void);
 //static void  _set_prio_process_env(void);
 //static void  _set_submit_dir_env(void);
+static void updateMinJobAge (char* source, int min_job_age);
 
 int main(int argc, char *argv[])
 {
@@ -170,140 +175,110 @@ int main(int argc, char *argv[])
 		printf ("Node should be iddle and ready to be used.\n");
 		exit(-1);
 	}
-	else {
-		/*
-		 * slurm_init_resv_desc_msg - initialize reservation descriptor with
-		 *	default values
-		 * OUT job_desc_msg - user defined partition descriptor
-		 */
-	    resv_desc_msg_t         resv_msg;
-		slurm_init_resv_desc_msg ( &resv_msg );
-		resv_msg.start_time = time(NULL) + 1;  /* Now! */
-		resv_msg.duration = job_info.time_limit;
-		//uint32_t node_cnt = 1;
-		//resv_msg.node_cnt = &node_cnt;
-		resv_msg.node_list = opt.node; //TODO this reserves just one node. We have to think what to do with parallel jobs
-		resv_msg.users = "root"; //TODO this has to be taken from the job.
-								//The problem is that job_info.user_id gives the Id, and i don't know how to get the user name from that
 
-		/*
-		resv_name = slurm_create_reservation (&resv_msg);
-		if (!resv_name) {
-			 slurm_perror ("slurm_create_reservation error");
-			 exit (1);
-		}
-		free(resv_name);
-		 */
-		printf ("Reservation is disabled now for debiugging purposes \n");
-		printf("Node %s is reserved, waiting for the migration.\n", node.name);
+	
+
+
+/*
+	//NODE RESERVATION
+    	resv_desc_msg_t         resv_msg;
+	slurm_init_resv_desc_msg ( &resv_msg );
+	resv_msg.start_time = time(NULL) + 1;  
+	resv_msg.duration = job_info.time_limit;
+	//uint32_t node_cnt = 1;
+	//resv_msg.node_cnt = &node_cnt;
+	resv_msg.node_list = opt.node; //TODO this reserves just one node. We have to think what to do with parallel jobs
+	resv_msg.users = "root"; //TODO this has to be taken from the job. The problem is that job_info.user_id gives the Id, and i don't know how to get the user name from that
+
+	char * resv_name; 
+	resv_name = slurm_create_reservation (&resv_msg);
+	if (!resv_name) {
+		 slurm_perror ("slurm_create_reservation error");
+		 exit (1);
 	}
+	printf("Node %s is reserved with name %s, waiting for the migration.\n", node.name, resv_name);
+	//aqui hay que meter el reservation
+
 
 	// free the node information response message
 	slurm_free_node_info_msg(node_access);
+*/
 
-	/* CREATE CHECKPOINT */
-	printf ("Starting checkpoint\n");
+	printf("Checkpointing code\n");
+	char* checkpoint_directory = "/home/slurm";
 
 
-	//TODO decide later where to put this.
-	//before the checkpoint: error due to desc not initialized
-	//after: makes no sense, as this is just a test and should not obly to make a checkpoint.
-	/*
-	if (opt.test_only){
-		printf("opt testontly");
-		if (slurm_job_will_run(&desc) != SLURM_SUCCESS) {
-			slurm_perror("allocation failure");
-			exit (1);
-		}
-	}
-	 */
+	/* clean internal stucture.
+	this is automatically done every "MinJobAge" seconds. The problem is that if this number is too low, there is a system overhead.
+	so we set it to the minimum value, everything is cleaned, and then we return it to the original value
+	to do so,we
+		1.- create a new configuration file where this value is modified 
+		2.- reload the info, so the value is updated
+		3.- sleep for that time, so the internal structures are cleaned
+		4.- put the old configuration file
+		5.- reload the info again
+		6.- clean everything
+	This solution is in fact an ugly hack, but I haven't found a better alternative. And this is efficient anyway :)
+*/
+	
 
-	/*
-	 * slurm_checkpoint_vacate - equest a checkpoint for the identified job step.
-	 *  Terminate its execution upon completion of the checkpoint.
-	 *
-	 *	the job will continue execution after the checkpoint operation completes
-	 * IN job_id   - job on which to perform operation
-	 * IN step_id  - job step on which to perform operation
-	 * IN max_wait  - maximum wait for operation to complete, in seconds
-	 * IN image_dir - directory used to get/put checkpoint images
-	 * RET 0 or a slurm error code
-	 */
-	printf("checkpointing code\n");
-	char* checkpoint_location = "/home/slurm";
+	slurm_ctl_conf_t*  slurm_ctl_conf_ptr; 
+	time_t update_time = 0;
 
-	printf ("I am going to call slurm_checkpoint_vacate\n");
-	if (( errorCode = slurm_checkpoint_vacate (opt.jobid, opt.stepid, 0,checkpoint_location )) != 0){
+	if (( errorCode = slurm_load_ctl_conf (update_time, &slurm_ctl_conf_ptr)) != 0){
+		slurm_perror ("there was an error calling slurm_load_ctl_conf. Error:");
+		exit(errorCode);
+	 }
+
+	int original_min_job_age = slurm_ctl_conf_ptr->min_job_age;
+	char* configFile = slurm_ctl_conf_ptr->slurm_conf;
+	int new_min_job_age = 3;
+
+	updateMinJobAge(configFile, new_min_job_age);
+
+	printf("Saving status of running task\n");
+	if (( errorCode = slurm_checkpoint_vacate (opt.jobid, opt.stepid, 0,checkpoint_directory )) != 0){
 		slurm_perror ("there was an error calling slurm_checkpoint_vacate. Error:");
 		exit(errorCode);
 	 }
-	/* RESTART CHECKPOINT SOMEWHERE ELSE */
-
-	printf("restarting checkpoint. This will take a while\n");
 
 
-	/*
-	 * slurm_checkpoint_restart - restart execution of a checkpointed job step.
-	 * IN job_id  - job on which to perform operation
-	 * IN step_id - job step on which to perform operation
-	 * stick  If non-zero then restart the job on the same nodes that it was checkpointed from.
-	 * image_dir - Directory specification for where the checkpoint file should be read from or written to
-	 *
-	 * RET 0 or a slurm error code
-	 */
-	int i = 0;
-	printf ("I am going to call slurm_checkpoint_restart\n");
-	printf ("node value is %s\n", opt.node);
-
-	while ( slurm_checkpoint_restart(opt.jobid , opt.stepid, 0,  checkpoint_location) != 0) {
-		sleep (10);
-		i = i + 10;
-		//slurm_perror("Error: ");
-		printf ("...%i\n", i);
-
+	//make sure that the job has been purged
+	printf("Waiting system to update internal info\n");
+	while (job_ptr->job_array[job_ptr->record_count-1].job_state == JOB_RUNNING){
+		if (slurm_load_job (&job_ptr, opt.jobid, show_flags) != SLURM_SUCCESS ){
+			printf ("I haven't been able to update job status, cancelling\n");
+			exit(-1);
+		}
+		sleep(1);
 	}
 
-	printf("restarted!");
+	updateMinJobAge(configFile, original_min_job_age);
+	printf("Restarting checkpoint\n");
 
-
-/*
- *
- * I don't know why this is here
- */
-/*
-	while (slurm_submit_batch_job(&desc, &resp) < 0) {
-		static char *msg;
-
-		if (errno == ESLURM_ERROR_ON_DESC_TO_RECORD_COPY)
-			msg = "Slurm job queue full, sleeping and retrying.";
-		else if (errno == ESLURM_NODES_BUSY) {
-			msg = "Job step creation temporarily disabled, "
-			      "retrying";
-		} else if (errno == EAGAIN) {
-			msg = "Slurm temporarily unable to accept job, "
-			      "sleeping and retrying.";
-		} else
-			msg = NULL;
-		if ((msg == NULL) || (retries >= MAX_RETRIES)) {
-			error("Batch job submission failed: %m");
-			exit(error_exit);
+	int i = 0;
+	//while ( slurm_checkpoint_restart(opt.jobid, opt.stepid, 0,  checkpoint_directory) != 0) {
+	while ( slurm_checkpoint_migrate(opt.jobid , opt.stepid, opt.node, checkpoint_directory) != 0){
+		//slurm_perror ("there was an error calling slurm_checkpoint_migrate. Error:");
+		sleep (i++);
 		}
 
-		if (retries)
-			debug("%s", msg);
-		else if (errno == ESLURM_NODES_BUSY)
-			info("%s", msg);
-		else
-			error("%s", msg);
-		sleep (++retries);
-        }
-
-	xfree(desc.script);
-	slurm_free_submit_response_response_msg(resp);
-
-	*/
+	printf("Job has been migrated\n");
 
 
+
+/*
+	//RESERVATION 2
+	//this is probably a bad idea. I think it is better to create a reservation with a short life, so there is 
+	//no need of deleting it. The basic problem is that the deletion seems to require that no job is running on that reservation...
+
+	if ((errorCode = slurm_delete_reservation (resv_name)) != 0) {
+		slurm_perror ("slurm_delete_reservation");
+		exit(errorCode);
+	}
+	free(resv_name);
+
+*/
 	return 0;
 }
 
@@ -322,54 +297,57 @@ static void _set_exit_code(void)
 }
 
 
-/* Set SLURM_SUBMIT_DIR and SLURM_SUBMIT_HOST environment variables within
- * current state */
 
-/*
-static void _set_submit_dir_env(void)
-{
-	char buf[MAXPATHLEN + 1], host[256];
+static void updateMinJobAge (char* source, int min_job_age){
 
-	if ((getcwd(buf, MAXPATHLEN)) == NULL)
-		error("getcwd failed: %m");
-	else if (setenvf(NULL, "SLURM_SUBMIT_DIR", "%s", buf) < 0)
-		error("unable to set SLURM_SUBMIT_DIR in environment");
+	char * line = NULL;
+	size_t len = 0;
+	ssize_t read;
+	char tmpFileName[99] = "/tmp/tmp_slurm.conf";
+	int errorCode = 0;
 
-	if ((gethostname(host, sizeof(host))))
-		error("gethostname_short failed: %m");
-	else if (setenvf(NULL, "SLURM_SUBMIT_HOST", "%s", host) < 0)
-		error("unable to set SLURM_SUBMIT_HOST in environment");
-}
-*/
+	FILE *source_file, *target_file;
+	source_file = fopen(source, "r");
+	target_file = fopen(tmpFileName, "w");
 
-/*
- * _set_prio_process_env
- *
- * Set the internal SLURM_PRIO_PROCESS environment variable to support
- * the propagation of the users nice value and the "PropagatePrioProcess"
- * config keyword.
- */
-
-
-/*
-static void  _set_prio_process_env(void)
-{
-	int retval;
-
-	errno = 0; // needed to detect a real failure since prio can be -1
-
-	if ((retval = getpriority (PRIO_PROCESS, 0)) == -1)  {
-		if (errno) {
-			error ("getpriority(PRIO_PROCESS): %m");
-			return;
+	while ((read = getline(&line, &len, source_file)) != -1) {
+		if (strncmp(line, "MinJobAge", strlen("MinJobAge")) == 0){
+			char newString[99];
+			sprintf(newString, "MinJobAge=%d\n", min_job_age);
+			fprintf(target_file, newString);
+		}
+		else {
+			fprintf(target_file, line);
 		}
 	}
 
-	if (setenvf (NULL, "SLURM_PRIO_PROCESS", "%d", retval) < 0) {
-		error ("unable to set SLURM_PRIO_PROCESS in environment");
-		return;
-	}
 
-	debug ("propagating SLURM_PRIO_PROCESS=%d", retval);
+	fclose(source_file);
+	fclose(target_file);
+
+
+	source_file = fopen(tmpFileName, "r");
+	target_file = fopen(source, "w");
+
+	while ((read = getline(&line, &len, source_file)) != -1) {
+		fprintf(target_file, line);
+	}
+	fclose(source_file);
+	fclose(target_file);
+
+
+	if (( errorCode = unlink (tmpFileName)) != 0){
+		printf("there was an error deleting tmp file %s ", tmpFileName);
+		exit(errorCode);
+	 }
+
+
+
+	if (( errorCode = slurm_reconfigure()) != 0){
+		slurm_perror ("there was an error calling slurm_reconfigure. Error:");
+		exit(errorCode);
+	 }
+
+
 }
-*/
+

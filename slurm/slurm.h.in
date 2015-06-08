@@ -4321,7 +4321,23 @@ extern int slurm_checkpoint_vacate PARAMS((uint32_t job_id,
 extern int slurm_checkpoint_restart PARAMS((uint32_t job_id,
 					    uint32_t step_id,
 					    uint16_t stick,
-					    char *image_dir, ...));
+					    char *image_dir));
+
+
+/*
+ * slurm_checkpoint_migrate - migrate a job after it has been checkpointed.
+ * IN job_id  - job on which to perform operation
+ * IN step_id - job step on which to perform operation
+ * IN destination_nodes: nodes where the job will be restarted. AT THIS MOMENT, ONLY SERIAL JOBS (1 NODE) ARE SUPPORTED
+ * IN image_dir - directory to find checkpoint image files
+ * RET 0 or a slurm error code
+ */
+extern int slurm_checkpoint_migrate PARAMS((uint32_t job_id,
+					    uint32_t step_id,
+					    char* destination_nodes,
+					    char *image_dir));
+
+
 
 /*
  * slurm_checkpoint_complete - note the completion of a job step's checkpoint
