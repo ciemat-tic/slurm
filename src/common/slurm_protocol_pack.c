@@ -555,6 +555,17 @@ static int  _unpack_checkpoint_task_comp(checkpoint_task_comp_msg_t **msg_ptr,
 					 Buf buffer,
 					 uint16_t protocol_version);
 
+static void _pack_purge_msg(purge_msg_t *msg, Buf buffer,
+				 uint16_t protocol_version);
+static int  _unpack_purge_msg(purge_msg_t **msg_ptr, Buf buffer,
+				   uint16_t protocol_version);
+
+static void _pack_purge_resp_msg(purge_resp_msg_t *msg, Buf buffer,
+				      uint16_t protocol_version);
+static int  _unpack_purge_resp_msg(purge_resp_msg_t **msg_ptr,
+					Buf buffer,
+					uint16_t protocol_version);
+
 static void _pack_suspend_msg(suspend_msg_t *msg, Buf buffer,
 			      uint16_t protocol_version);
 static int  _unpack_suspend_msg(suspend_msg_t **msg_ptr, Buf buffer,
@@ -1289,6 +1300,17 @@ pack_msg(slurm_msg_t const *msg, Buf buffer)
 					  buffer,
 					  msg->protocol_version);
 		break;
+
+	case REQUEST_PURGE:
+		_pack_purge_msg((purge_msg_t *)msg->data, buffer,
+				     msg->protocol_version);
+		break;
+	case RESPONSE_PURGE:
+		_pack_purge_resp_msg((purge_resp_msg_t *)msg->data,
+					  buffer,
+					  msg->protocol_version);
+		break;	
+
 	case REQUEST_SUSPEND:
 	case SRUN_REQUEST_SUSPEND:
 		_pack_suspend_msg((suspend_msg_t *)msg->data, buffer,
@@ -1957,6 +1979,17 @@ unpack_msg(slurm_msg_t * msg, Buf buffer)
 		rc = _unpack_checkpoint_resp_msg((checkpoint_resp_msg_t **)
 						 & msg->data, buffer,
 						 msg->protocol_version);
+		break;
+
+	case REQUEST_PURGE:
+		rc = _unpack_purge_msg((purge_msg_t **)
+					    & msg->data, buffer,
+					    msg->protocol_version);
+		break;
+	case RESPONSE_PURGE:
+		rc = _unpack_purge_resp_msg((purge_resp_msg_t **)
+					    & msg->data, buffer,
+					    msg->protocol_version);
 		break;
 	case REQUEST_SUSPEND:
 	case SRUN_REQUEST_SUSPEND:
@@ -11961,6 +11994,72 @@ unpack_error:
 	slurm_free_checkpoint_resp_msg(msg);
 	return SLURM_ERROR;
 }
+
+
+static void
+_pack_purge_msg(purge_msg_t *msg, Buf buffer,
+		     uint16_t protocol_version)
+{
+
+	xassert ( msg != NULL );
+	pack32(msg->job_id,  buffer ) ;
+}
+
+static int
+_unpack_purge_msg(purge_msg_t **msg_ptr, Buf buffer,
+		       uint16_t protocol_version)
+{
+	purge_msg_t * msg;
+	uint32_t uint32_tmp;
+	xassert ( msg_ptr != NULL );
+
+	msg = xmalloc ( sizeof (purge_msg_t) ) ;
+	*msg_ptr = msg ;
+
+	safe_unpack32(&msg->job_id, buffer ) ;
+
+	return SLURM_SUCCESS;
+
+unpack_error:
+	*msg_ptr = NULL;
+	slurm_free_purge_msg(msg);
+	return SLURM_ERROR;
+}
+
+static void
+_pack_purge_resp_msg(purge_resp_msg_t *msg, Buf buffer,
+			  uint16_t protocol_version)
+{
+	xassert ( msg != NULL );
+
+	pack_time ( msg -> event_time, buffer ) ;
+	pack32((uint32_t)msg -> error_code,  buffer ) ;
+	packstr ( msg -> error_msg, buffer ) ;
+}
+
+_unpack_purge_resp_msg(purge_resp_msg_t **msg_ptr, Buf buffer,
+			    uint16_t protocol_version)
+{
+	purge_resp_msg_t * msg;
+	uint32_t uint32_tmp;
+	xassert ( msg_ptr != NULL );
+
+	msg = xmalloc ( sizeof (purge_resp_msg_t) ) ;
+	*msg_ptr = msg ;
+
+	safe_unpack_time ( & msg -> event_time, buffer ) ;
+	safe_unpack32(& msg -> error_code , buffer ) ;
+	safe_unpackstr_xmalloc ( & msg -> error_msg, & uint32_tmp , buffer ) ;
+	return SLURM_SUCCESS;
+
+unpack_error:
+	*msg_ptr = NULL;
+	slurm_free_purge_resp_msg(msg);
+	return SLURM_ERROR;
+}
+
+
+
 
 static void _pack_file_bcast(file_bcast_msg_t * msg , Buf buffer,
 			     uint16_t protocol_version)

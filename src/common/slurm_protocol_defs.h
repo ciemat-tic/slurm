@@ -373,6 +373,9 @@ typedef enum {
 
 	MESSAGE_COMPOSITE = 11001,
 	RESPONSE_MESSAGE_COMPOSITE,
+
+	REQUEST_PURGE, 
+	RESPONSE_PURGE,
 } slurm_msg_type_t;
 
 typedef enum {
@@ -971,6 +974,19 @@ typedef struct srun_exec_msg {
 	char **  argv;		/* program arguments */
 } srun_exec_msg_t;
 
+typedef struct purge_msg {
+	uint32_t job_id;	/* slurm job_id */
+} purge_msg_t;
+
+
+typedef struct purge_resp_msg {
+	time_t   event_time;	/* time of purge start/finish */
+	uint32_t error_code;	/* error code on failure */
+	char   * error_msg;	/* error message on failure */
+} purge_resp_msg_t;
+
+
+
 typedef struct checkpoint_msg {
 	uint16_t op;		/* checkpoint operation, see enum check_opts */
 	uint16_t data;		/* operation specific data */
@@ -981,6 +997,7 @@ typedef struct checkpoint_msg {
 	char* destination_nodes; /* nodes where the checkpoint will be restarted.
 				 * NULL for default */
 } checkpoint_msg_t;
+
 
 typedef struct checkpoint_comp_msg {
 	uint32_t job_id;	/* slurm job_id */
@@ -1163,6 +1180,8 @@ extern int slurm_sort_char_list_desc(void *, void *);
 
 /* free message functions */
 extern void slurm_free_checkpoint_tasks_msg(checkpoint_tasks_msg_t * msg);
+extern void slurm_free_purge_msg(purge_msg_t * msg);
+extern void slurm_free_purge_resp_msg(purge_resp_msg_t * msg);
 extern void slurm_free_last_update_msg(last_update_msg_t * msg);
 extern void slurm_free_return_code_msg(return_code_msg_t * msg);
 extern void slurm_free_job_alloc_info_msg(job_alloc_info_msg_t * msg);

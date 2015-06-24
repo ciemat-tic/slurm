@@ -183,6 +183,7 @@ static void _kill_dependent(struct job_record *job_ptr);
 static void _list_delete_job(void *job_entry);
 static int  _list_find_job_id(void *job_entry, void *key);
 static int  _list_find_job_old(void *job_entry, void *key);
+static int _list_find_certain_job(void *job_entry, void *key);
 static int  _load_job_details(struct job_record *job_ptr, Buf buffer,
 			      uint16_t protocol_version);
 static int  _load_job_state(Buf buffer,	uint16_t protocol_version);
@@ -7528,6 +7529,97 @@ static int _list_find_job_old(void *job_entry, void *key)
 	return 1;		/* Purge the job */
 }
 
+
+
+/*
+ * _list_find_certain_job:  find specific job_id entry in the job list,
+ *	see common/list.h for documentation, key is job_id_ptr
+ *  The it decides if can be purged without worrying for min_age
+ * IN: job structure, ID of the desired work //TODO improve this description
+ *	see common/list.h for documentation, key is ignored
+ * global- job_list - the global partition list
+ * TODO this can possible be simplified
+ */
+static int _list_find_certain_job(void *job_entry, void *key) //id del trabajo a purgar
+{
+
+
+	debug3("Beggining of list_find_certain_jon\n");
+	//first part. If id is not correct, job has not been found and cannot be deleted
+	// this is mostly copied from _list_find_job_id
+	uint32_t *job_id_ptr = (uint32_t *) key;
+
+	if (((struct job_record *) job_entry)->job_id != *job_id_ptr) //0 = false :)
+		return 0;
+	
+	//second part. If it has been found, we need to check wheter it can be deleted. 
+	//this is mostly copied from _list_find_job_old
+
+	struct job_record *job_ptr = (struct job_record *)job_entry;
+	uint16_t cleaning = 0;
+	time_t kill_age, now = time(NULL);;
+
+
+	if (IS_JOB_COMPLETING(job_ptr) && !LOTS_OF_AGENTS) {
+		kill_age = now - (slurmctld_conf.kill_wait +
+				  2 * slurm_get_msg_timeout());
+		if (job_ptr->time_last_active < kill_age) {
+			job_ptr->time_last_active = now;
+			re_kill_job(job_ptr);
+		}
+
+		return 0;       /* Job still completing */
+	}
+
+	if (job_ptr->epilog_running)
+		return 0;       /* EpilogSlurmctld still running */
+		
+
+	if (slurmctld_conf.min_job_age == 0)
+		return 0;	/* No job record purging */
+		
+
+
+	if (!(IS_JOB_FINISHED(job_ptr)))
+		return 0;	/* Job still active */
+		
+
+	if (job_ptr->step_list && list_count(job_ptr->step_list)) {
+		debug("Job %u still has %d active steps",
+		      job_ptr->job_id, list_count(job_ptr->step_list));
+		return 0;	/* steps are still active */
+	}
+
+	if (job_ptr->array_recs) {
+		if (job_ptr->array_recs->tot_run_tasks ||
+		    !test_job_array_completed(job_ptr->array_job_id)) {
+			/* Some tasks from this job array still active */
+			return 0;
+		}
+	}
+
+	select_g_select_jobinfo_get(job_ptr->select_jobinfo,
+				    SELECT_JOBDATA_CLEANING,
+				    &cleaning);
+	if (cleaning)
+		return 0;      /* Job hasn't finished yet */
+
+	if (bb_g_job_test_stage_out(job_ptr) != 1)
+		return 0;      /* Stage out in progress */
+
+	/* If we don't have a db_index by now and we are running with
+	 * the slurmdbd, lets put it on the list to be handled later
+	 * when slurmdbd comes back up since we won't get another chance.
+	 * job_start won't pend for job_db_inx when the job is finished.
+	 */
+	if (with_slurmdbd && !job_ptr->db_index)
+		jobacct_storage_g_job_start(acct_db_conn, job_ptr)
+
+	return 1;		/* Purge the job */
+}
+
+
+
 /* Determine if ALL partitions associated with a job are hidden */
 static bool _all_parts_hidden(struct job_record *job_ptr)
 {
@@ -8758,6 +8850,112 @@ void purge_old_job(void)
 		last_job_update = time(NULL);
 	}
 }
+
+
+
+
+/*
+ * purge_job - forces a job purge not caring about  MIN_JOB_AGE
+ *	Test job dependencies, handle after_ok, after_not_ok before
+ *	purging any jobs.
+ * 
+ * NOTE: READ lock slurmctld config and WRITE lock jobs before entry
+ * NOTE2: purge is done through removing job from a global variable job_list
+ * TODO this should be cleaned, most of this is (I think) redundant, as this is called when we know for sure that the job has been shut down
+ * also, this is just a copy of purge_old_job but changing the "list_delete_all" function being called, what is quite hacky
+ */
+//MANUEL
+
+extern int purge_job(uint32_t job_id, slurm_fd_t conn_fd, uint16_t protocol_version)
+{
+
+	ListIterator job_iterator;
+	struct job_record  *job_ptr;
+	int i;
+	int rc = SLURM_SUCCESS;
+	purge_resp_msg_t resp_data;
+	slurm_msg_t resp_msg;
+
+	slurm_msg_t_init(&resp_msg);
+	resp_msg.protocol_version = protocol_version;
+
+
+
+	job_iterator = list_iterator_create(job_list);
+	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+		if (!IS_JOB_PENDING(job_ptr))
+			continue;
+
+		if (test_job_dependency(job_ptr) == 2) {
+			char jbuf[JBUFSIZ];
+
+			/* Check what are the job disposition
+			 * to deal with invalid dependecies
+			 */
+			if (job_ptr->bit_flags & KILL_INV_DEP) {
+				_kill_dependent(job_ptr);
+			} else if (job_ptr->bit_flags & NO_KILL_INV_DEP) {
+				debug("\
+%s: %s job dependency condition never satisfied", __func__,
+				      jobid2str(job_ptr, jbuf, sizeof(jbuf)));
+				job_ptr->state_reason = WAIT_DEP_INVALID;
+				xfree(job_ptr->state_desc);
+			} else if (kill_invalid_dep) {
+				_kill_dependent(job_ptr);
+			} else {
+				debug("\
+%s: %s dependency condition never satisfied", __func__,
+				      jobid2str(job_ptr, jbuf, sizeof(jbuf)));
+				job_ptr->state_reason = WAIT_DEP_INVALID;
+				xfree(job_ptr->state_desc);
+			}
+		}
+
+		if (job_ptr->state_reason == WAIT_DEP_INVALID) {
+			if (job_ptr->bit_flags & KILL_INV_DEP) {
+				/* The job got the WAIT_DEP_INVALID
+				 * before slurmctld was reconfigured.
+				 */
+				_kill_dependent(job_ptr);
+			} else if (job_ptr->bit_flags & NO_KILL_INV_DEP) {
+				continue;
+			} else if (kill_invalid_dep) {
+				_kill_dependent(job_ptr);
+			}
+		}
+	}
+
+	list_iterator_destroy(job_iterator);
+
+
+	//return list_delete_all(job_list, &_list_find_certain_job, (void *) &job_id);
+
+	i = list_delete_all(job_list, &_list_find_certain_job, (void *) &job_id);
+
+	if (i) {
+		debug2("purge_job: purged %d job records", i);
+		last_job_update = time(NULL);
+	}
+
+
+
+	//exit in case of error, I think... gotta debug this
+
+	memset((void *)&resp_data, 0, sizeof(purge_resp_msg_t));
+	time_t timeAux = 0;
+	resp_data.event_time=timeAux;
+	resp_data.error_code=0;
+	char msg[2] = "";
+	resp_data.error_msg=&msg;
+
+	reply:
+		resp_msg.msg_type = RESPONSE_PURGE;
+		resp_msg.data = &resp_data;
+		(void) slurm_send_node_msg(conn_fd, &resp_msg);
+		return rc;
+}
+
+
 
 
 /*

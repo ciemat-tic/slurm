@@ -1058,6 +1058,25 @@ extern void slurm_free_checkpoint_tasks_msg(checkpoint_tasks_msg_t * msg)
 	}
 }
 
+extern void slurm_free_purge_msg(purge_msg_t * msg)
+{
+	if (msg) {
+		//TODO we probably have a memory leak here. What should we free?
+		//xfree(msg->job_id);
+		xfree(msg);
+	}
+}
+
+extern void slurm_free_purge_resp_msg(purge_resp_msg_t *msg)
+{
+	if (msg) {
+		xfree(msg->error_msg);
+		xfree(msg);
+	}
+}
+
+
+
 extern void slurm_free_epilog_complete_msg(epilog_complete_msg_t * msg)
 {
 	if (msg) {
@@ -3306,6 +3325,13 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case REQUEST_CHECKPOINT_TASK_COMP:
 		slurm_free_checkpoint_task_comp_msg(data);
 		break;
+	case REQUEST_PURGE:
+		slurm_free_purge_msg(data);
+		break;
+	case RESPONSE_PURGE:
+		slurm_free_purge_resp_msg(data);
+		break;
+
 	case REQUEST_FRONT_END_INFO:
 		slurm_free_front_end_info_request_msg(data);
 		break;
@@ -3489,6 +3515,10 @@ extern uint32_t slurm_get_return_code(slurm_msg_type_t type, void *data)
 		 * this may be a slurm_msg_t data type lacking the
 		 * err field found in ret_data_info_t data type */
 		rc = SLURM_COMMUNICATIONS_CONNECTION_ERROR;
+		break;
+//TODO manuel not sure of this
+	case RESPONSE_PURGE:
+		rc = SLURM_SUCCESS;
 		break;
 	default:
 		error("don't know the rc for type %u returning %u", type, rc);
@@ -3833,6 +3863,10 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_SIGNAL_TASKS";
 	case REQUEST_CHECKPOINT_TASKS:
 		return "REQUEST_CHECKPOINT_TASKS";
+	case REQUEST_PURGE:
+		return "REQUEST_PURGE";
+	case RESPONSE_PURGE:
+		return "RESPONSE_PURGE";
 	case REQUEST_TERMINATE_TASKS:
 		return "REQUEST_TERMINATE_TASKS";
 	case REQUEST_REATTACH_TASKS:

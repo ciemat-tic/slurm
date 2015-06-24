@@ -71,7 +71,7 @@
 static void  _set_exit_code(void);
 //static void  _set_prio_process_env(void);
 //static void  _set_submit_dir_env(void);
-static void updateMinJobAge (char* source, int min_job_age);
+//static void updateMinJobAge (char* source, int min_job_age);
 
 int main(int argc, char *argv[])
 {
@@ -208,33 +208,6 @@ int main(int argc, char *argv[])
 	char* checkpoint_directory = "/home/slurm";
 
 
-	/* clean internal stucture.
-	this is automatically done every "MinJobAge" seconds. The problem is that if this number is too low, there is a system overhead.
-	so we set it to the minimum value, everything is cleaned, and then we return it to the original value
-	to do so,we
-		1.- create a new configuration file where this value is modified 
-		2.- reload the info, so the value is updated
-		3.- sleep for that time, so the internal structures are cleaned
-		4.- put the old configuration file
-		5.- reload the info again
-		6.- clean everything
-	This solution is in fact an ugly hack, but I haven't found a better alternative. And this is efficient anyway :)
-*/
-	
-
-	slurm_ctl_conf_t*  slurm_ctl_conf_ptr; 
-	time_t update_time = 0;
-
-	if (( errorCode = slurm_load_ctl_conf (update_time, &slurm_ctl_conf_ptr)) != 0){
-		slurm_perror ("there was an error calling slurm_load_ctl_conf. Error:");
-		exit(errorCode);
-	 }
-
-	int original_min_job_age = slurm_ctl_conf_ptr->min_job_age;
-	char* configFile = slurm_ctl_conf_ptr->slurm_conf;
-	int new_min_job_age = 3;
-
-	updateMinJobAge(configFile, new_min_job_age);
 
 	printf("Saving status of running task\n");
 	if (( errorCode = slurm_checkpoint_vacate (opt.jobid, opt.stepid, 0,checkpoint_directory )) != 0){
@@ -245,15 +218,21 @@ int main(int argc, char *argv[])
 
 	//make sure that the job has been purged
 	printf("Waiting system to update internal info\n");
-	while (job_ptr->job_array[job_ptr->record_count-1].job_state == JOB_RUNNING){
+	while (job_info.job_state  == JOB_RUNNING){
+		if (( errorCode =  slurm_purge (0, opt.jobid)) != 0){
+			slurm_perror ("there was an error calling slurm_purge. Error:");
+			exit(errorCode);
+		 }
 		if (slurm_load_job (&job_ptr, opt.jobid, show_flags) != SLURM_SUCCESS ){
-			printf ("I haven't been able to update job status, cancelling\n");
-			exit(-1);
+			printf ("job does not exist, so it has been checkpointed and removed frmo the system\n");
+			break;
 		}
+		job_info = job_ptr->job_array[job_ptr->record_count-1];
 		sleep(1);
 	}
 
-	updateMinJobAge(configFile, original_min_job_age);
+
+
 	printf("Restarting checkpoint\n");
 
 	int i = 0;
@@ -298,6 +277,8 @@ static void _set_exit_code(void)
 
 
 
+
+/*
 static void updateMinJobAge (char* source, int min_job_age){
 
 	char * line = NULL;
@@ -350,4 +331,6 @@ static void updateMinJobAge (char* source, int min_job_age){
 
 
 }
+
+*/
 

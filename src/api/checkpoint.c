@@ -136,6 +136,35 @@ static int _migrate_op (uint16_t op,
 }
 
 
+
+/*
+ * _flush_op . Flushes old jobs. 
+ * TODO this should not be here. But where?
+ * IN op        - operation to perform. Currently it doesn't matter
+ * IN job_id    - job on which to perform operation
+ * RET 0 or a slurm error code
+ */
+
+static int _purge_op (uint16_t op,
+			   uint32_t job_id)
+{
+	int rc;
+	purge_msg_t purge_req;
+	slurm_msg_t req_msg;
+
+	slurm_msg_t_init(&req_msg);
+	purge_req.job_id    = job_id;
+	req_msg.msg_type  = REQUEST_PURGE;
+	req_msg.data      = &purge_req;
+
+	if (slurm_send_recv_controller_rc_msg(&req_msg, &rc) < 0)
+		return SLURM_ERROR;
+	slurm_seterrno(rc);
+	return rc;
+}
+
+
+
 /*
  * slurm_checkpoint_able - determine if the specified job step can presently
  *	be checkpointed
@@ -380,6 +409,20 @@ extern int slurm_checkpoint_error ( uint32_t job_id, uint32_t step_id,
 
 	return rc;
 }
+
+
+/*
+ * slurm_slurm_purge- forces purge of a certain job
+ * IN op - currently it does nothing
+ * IN job_id  - job on which to perform operation
+ * RET 0 or a slurm error code
+ */
+extern int slurm_purge (uint16_t op, uint32_t job_id)
+{
+	return _purge_op (op, job_id);
+}
+
+
 
 /*
  *  Handle a return code message type.

@@ -1849,6 +1849,16 @@ extern int prolog_complete(uint32_t job_id, uint32_t prolog_return_code);
  */
 void purge_old_job(void);
 
+
+/*
+ * purge_job - forces a job purge not caring about  MIN_JOB_AGE
+ *	Test job dependencies, handle after_ok, after_not_ok before
+ *	purging any jobs.
+ * NOTE: READ lock slurmctld config and WRITE lock jobs before entry
+ */
+extern int purge_job(uint32_t job_id, slurm_fd_t conn_fd, uint16_t protocol_version);
+
+
 /* Convert a comma delimited list of QOS names into a bitmap */
 extern void qos_list_build(char *qos, bitstr_t **qos_bits);
 

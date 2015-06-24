@@ -2876,6 +2876,7 @@ int slurm_receive_msg(slurm_fd_t fd, slurm_msg_t *msg, int timeout)
 		error("%s: authentication: %s ", __func__,
 		       g_slurm_auth_errstr(g_slurm_auth_errno(NULL)));
 		free_buf(buffer);
+
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		goto total_return;
 	}
@@ -3304,6 +3305,7 @@ int slurm_receive_msg_and_forward(slurm_fd_t fd, slurm_addr_t *orig_addr,
 		error( "authentication: %s ",
 		       g_slurm_auth_errstr(g_slurm_auth_errno(NULL)));
 		free_buf(buffer);
+
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		goto total_return;
 	}
@@ -3341,6 +3343,7 @@ int slurm_receive_msg_and_forward(slurm_fd_t fd, slurm_addr_t *orig_addr,
 	     (unpack_msg(msg, buffer) != SLURM_SUCCESS) ) {
 		(void) g_slurm_auth_destroy(auth_cred);
 		free_buf(buffer);
+
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		goto total_return;
 	}
@@ -3413,6 +3416,7 @@ int slurm_send_node_msg(slurm_fd_t fd, slurm_msg_t * msg)
 	 * but we may need to generate the credential again later if we
 	 * wait too long for the incoming message.
 	 */
+
 	if (msg->flags & SLURM_GLOBAL_AUTH_KEY) {
 		auth_cred = g_slurm_auth_create(NULL, 2, _global_auth_key());
 	} else {
@@ -3427,6 +3431,7 @@ int slurm_send_node_msg(slurm_fd_t fd, slurm_msg_t * msg)
 	}
 	forward_wait(msg);
 
+
 	if (difftime(time(NULL), start_time) >= 60) {
 		(void) g_slurm_auth_destroy(auth_cred);
 		if (msg->flags & SLURM_GLOBAL_AUTH_KEY) {
@@ -3438,6 +3443,7 @@ int slurm_send_node_msg(slurm_fd_t fd, slurm_msg_t * msg)
 			xfree(auth_info);
 		}
 	}
+
 	if (auth_cred == NULL) {
 		error("authentication: %s",
 		      g_slurm_auth_errstr(g_slurm_auth_errno(NULL)) );
@@ -3467,6 +3473,7 @@ int slurm_send_node_msg(slurm_fd_t fd, slurm_msg_t * msg)
 	/*
 	 * Pack message into buffer
 	 */
+
 	_pack_msg(msg, &header, buffer);
 
 #if	_DEBUG
@@ -3475,9 +3482,11 @@ int slurm_send_node_msg(slurm_fd_t fd, slurm_msg_t * msg)
 	/*
 	 * Send message
 	 */
+
 	rc = slurm_msg_sendto( fd, get_buf_data(buffer),
 			       get_buf_offset(buffer),
 			       SLURM_PROTOCOL_NO_SEND_RECV_FLAGS );
+
 
 	if ((rc < 0) && (errno == ENOTCONN)) {
 		debug3("slurm_msg_sendto: peer has disappeared for msg_type=%u",
@@ -3501,6 +3510,7 @@ int slurm_send_node_msg(slurm_fd_t fd, slurm_msg_t * msg)
 	}
 
 	free_buf(buffer);
+
 	return rc;
 }
 
@@ -3777,7 +3787,6 @@ _send_and_recv_msg(slurm_fd_t fd, slurm_msg_t *req,
 	int retry = 0;
 	int rc = -1;
 	slurm_msg_t_init(resp);
-
 	if (slurm_send_node_msg(fd, req) >= 0) {
 		/* no need to adjust and timeouts here since we are not
 		   forwarding or expecting anything other than 1 message

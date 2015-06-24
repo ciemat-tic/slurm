@@ -4404,6 +4404,16 @@ extern int slurm_checkpoint_tasks PARAMS((uint32_t job_id, uint16_t step_id,
 					  time_t begin_time, char *image_dir,
 					  uint16_t max_wait, char *nodelist));
 
+
+/*
+ * slurm_slurm_purge- forces purge of a certain job
+ * IN op - currently it does nothing
+ * IN job_id  - job on which to perform operation
+ * RET 0 or a slurm error code
+ */
+extern int slurm_purge (uint16_t op, uint32_t job_id);
+
+
 /*****************************************************************************\
  *      SLURM TRIGGER FUNCTIONS
 \*****************************************************************************/

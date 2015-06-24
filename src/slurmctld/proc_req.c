@@ -165,6 +165,7 @@ inline static void  _slurm_rpc_kill_job2(slurm_msg_t *msg);
 inline static void  _slurm_rpc_node_registration(slurm_msg_t *msg,
 						 bool running_composite);
 inline static void  _slurm_rpc_ping(slurm_msg_t * msg);
+inline static void  _slurm_rpc_purge(slurm_msg_t * msg);
 inline static void  _slurm_rpc_reboot_nodes(slurm_msg_t * msg);
 inline static void  _slurm_rpc_reconfigure_controller(slurm_msg_t * msg);
 inline static void  _slurm_rpc_resv_create(slurm_msg_t * msg);
@@ -216,7 +217,6 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 	DEF_TIMERS;
 	int i, rpc_type_index = -1, rpc_user_index = -1;
 	uint32_t rpc_uid;
-
 
 	/* Just to validate the cred */
 	rpc_uid = (uint32_t) g_slurm_auth_get_uid(msg->auth_cred, NULL);
@@ -574,6 +574,10 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 	case REQUEST_SICP_INFO:
 		_slurm_rpc_dump_sicp(msg);
 		/* No body to free */
+		break;
+	case REQUEST_PURGE:
+		_slurm_rpc_purge(msg);
+		slurm_free_purge_msg(msg->data);
 		break;
 	default:
 		error("invalid RPC msg_type=%u", msg->msg_type);
@@ -4367,17 +4371,6 @@ inline static void  _slurm_rpc_checkpoint(slurm_msg_t * msg)
 		}
 	}
 
-	//this should avoy the enourmous overhead on migrations
-	//NOTE: IT DOESNT. I'll leave it here anyway until problem is solved
-	if (ckpt_ptr->op == CHECK_MIGRATE)	{
-		//now = time(NULL);
-		//last_purge_job_time = now; this should be updated in controller.c to avoid to many purges (and reduce overhead)
-		debug2("Purging old records for migration");
-		lock_slurmctld(job_write_lock);
-		purge_old_job();
-		unlock_slurmctld(job_write_lock);
-	}
-
 }
 
 inline static void  _slurm_rpc_checkpoint_comp(slurm_msg_t * msg)
@@ -4440,6 +4433,30 @@ inline static void  _slurm_rpc_checkpoint_task_comp(slurm_msg_t * msg)
 		     ckpt_ptr->job_id, ckpt_ptr->step_id, TIME_STR);
 	}
 }
+
+
+
+
+/* Assorted purge operations */
+inline static void  _slurm_rpc_purge(slurm_msg_t * msg)
+{
+
+	slurmctld_lock_t job_write_lock = {
+		NO_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK };
+	int error_code = SLURM_SUCCESS;
+	DEF_TIMERS;
+	purge_msg_t *purge_ptr = (purge_msg_t *) msg->data;
+	uid_t uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
+
+	debug2("Processing RPC: REQUEST_PURGE from uid=%u", (unsigned int) uid);
+	lock_slurmctld(job_write_lock);
+	purge_job(purge_ptr->job_id, msg->conn_fd,msg->protocol_version); //this probably has to be modified
+	unlock_slurmctld(job_write_lock);
+
+}
+
+
+
 
 /* Copy an array of type char **, xmalloc() the array and xstrdup() the
  * strings in the array */
