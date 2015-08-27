@@ -1309,7 +1309,7 @@ pack_msg(slurm_msg_t const *msg, Buf buffer)
 		_pack_purge_resp_msg((purge_resp_msg_t *)msg->data,
 					  buffer,
 					  msg->protocol_version);
-		break;	
+		break;
 
 	case REQUEST_SUSPEND:
 	case SRUN_REQUEST_SUSPEND:
@@ -5928,6 +5928,7 @@ _pack_slurm_ctl_conf_msg(slurm_ctl_conf_info_msg_t * build_ptr, Buf buffer,
 		pack_time(build_ptr->boot_time, buffer);
 		packstr(build_ptr->bb_type, buffer);
 		packstr(build_ptr->checkpoint_type, buffer);
+		pack32(build_ptr->checkpoint_port, buffer);
 		packstr(build_ptr->chos_loc, buffer);
 		packstr(build_ptr->cluster_name, buffer);
 		pack16(build_ptr->complete_wait, buffer);
@@ -6202,6 +6203,8 @@ _pack_slurm_ctl_conf_msg(slurm_ctl_conf_info_msg_t * build_ptr, Buf buffer,
 		pack_time(build_ptr->boot_time, buffer);
 
 		packstr(build_ptr->checkpoint_type, buffer);
+		pack32(build_ptr->checkpoint_port, buffer);
+
 		packstr(build_ptr->chos_loc, buffer);
 		packstr(build_ptr->cluster_name, buffer);
 		pack16(build_ptr->complete_wait, buffer);
@@ -6469,6 +6472,8 @@ _pack_slurm_ctl_conf_msg(slurm_ctl_conf_info_msg_t * build_ptr, Buf buffer,
 		pack_time(build_ptr->boot_time, buffer);
 
 		packstr(build_ptr->checkpoint_type, buffer);
+		pack32(build_ptr->checkpoint_port, buffer);
+
 		packstr(build_ptr->cluster_name, buffer);
 		pack16(build_ptr->complete_wait, buffer);
 		packstr(build_ptr->control_addr, buffer);
@@ -6766,6 +6771,8 @@ _unpack_slurm_ctl_conf_msg(slurm_ctl_conf_info_msg_t **build_buffer_ptr,
 
 		safe_unpackstr_xmalloc(&build_ptr->checkpoint_type,
 				       &uint32_tmp, buffer);
+		safe_unpack32(&build_ptr->checkpoint_port, buffer);
+
 		safe_unpackstr_xmalloc(&build_ptr->chos_loc,
 				       &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&build_ptr->cluster_name,
@@ -7149,6 +7156,8 @@ _unpack_slurm_ctl_conf_msg(slurm_ctl_conf_info_msg_t **build_buffer_ptr,
 
 		safe_unpackstr_xmalloc(&build_ptr->checkpoint_type,
 				       &uint32_tmp, buffer);
+		safe_unpack32(&build_ptr->checkpoint_port, buffer);
+
 		safe_unpackstr_xmalloc(&build_ptr->chos_loc,
 				       &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&build_ptr->cluster_name,
@@ -7519,6 +7528,8 @@ _unpack_slurm_ctl_conf_msg(slurm_ctl_conf_info_msg_t **build_buffer_ptr,
 
 		safe_unpackstr_xmalloc(&build_ptr->checkpoint_type,
 				       &uint32_tmp, buffer);
+		safe_unpack32(&build_ptr->checkpoint_port, buffer);
+
 		safe_unpackstr_xmalloc(&build_ptr->cluster_name,
 				       &uint32_tmp, buffer);
 		safe_unpack16(&build_ptr->complete_wait, buffer);

@@ -54,7 +54,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
-#include <libcr.h>
+//#include <libcr.h>
 
 #include "slurm/slurm.h"
 
@@ -63,8 +63,12 @@
 #include "src/common/read_config.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+#include "src/common/slurm_protocol_api.h"
 
-static char *dmtcp_launch_path = DMTCP_HOME "/bin/dmtcp_launch";
+//static char *dmtcp_launch_path = DMTCP_HOME "/bin/dmtcp_launch";
+//TODO manuel: PKGLIBEXECDIR won't be recognized by compiler, WTF?
+
+static char *dmtcp_launch_path = SLURM_PREFIX "/libexec/slurm""/dmtcp_launch_wrapper.sh";
 static char *srun_path = SLURM_PREFIX "/bin/srun";
 
 /* global variables */
@@ -82,7 +86,7 @@ static int step_launched = 0;
 static pthread_mutex_t step_launch_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t step_launch_cond = PTHREAD_COND_INITIALIZER;
 
-static cr_client_id_t cr_id = -1;
+//static cr_client_id_t cr_id = -1;
 
 static void remove_listen_socket(void);
 static int  _wait_for_srun_connect(void);
@@ -163,13 +167,15 @@ on_child_exit(int signum, siginfo_t *siginfo, void *arg)
   	 * if srun_dmtcp is checkpoint/restart-ed after srun exited,
   	 * srun_pid will be the pid of the new srun.
 	 */
-	cr_enter_cs(cr_id);
+
+	 //TODO manuel. This looks like a semaphore too
+	//cr_enter_cs(cr_id);
 	if (waitpid(srun_pid, &status, WNOHANG) == srun_pid) {
 		verbose("srun(%d) exited, status: %d", srun_pid, status);
 		mimic_exit(status);
 	}
 	kill(srun_pid, SIGKILL);
-	cr_leave_cs(cr_id);
+//	cr_leave_cs(cr_id);
 }
 
 static int
@@ -205,27 +211,15 @@ init_srun_argv(int argc, char **argv)
 {
 	int i;
 
-	srun_argv = (char **)xmalloc(sizeof(char *) * (argc + 6));
+	srun_argv = (char **)xmalloc(sizeof(char *) * (argc + 2));
 
 	srun_argv[0] = srun_path;
 	srun_argv[1] = dmtcp_launch_path;
-	srun_argv[2] = "-p";
-	srun_argv[3] = "7779"; //TODO manuel port should not be hardcoded
-	srun_argv[4] = "--ckptdir";
-	srun_argv[5] = "/home/slurm/slurmFiles"; //TODO there is a slurm configuration param for this. Read & Set.
 
-	for (i = 1; i < argc +5; i ++) {
-		srun_argv[i + 5] = argv[i];
+	for (i = 1; i < argc +1; i ++) {
+		srun_argv[i + 1] = argv[i];
 	}
-	srun_argv[argc + 6] = NULL;
-
-	//TODO manuel debug
-	printf("srun_argv vale:\n");
-	for ( i = 0; i < argc + 6; i++){
-		printf("	%s\n", srun_argv[i]);
-	}
-
-
+	srun_argv[argc + 2] = NULL;
 
 	return  0;
 }
@@ -313,7 +307,7 @@ fork_exec_srun(void)
 		 */
 		setpgrp();
 
-		update_env("SLURM_srun_dmtcp_SOCKET", cr_sock_addr);
+		update_env("SLURM_SRUN_DMTCP_SOCKET", cr_sock_addr);
 
 		/*
 		 * DMTCP blocks all signals in thread-context callback functions
@@ -336,6 +330,13 @@ fork_exec_srun(void)
  *
  * NOTE: only can be called in callbak
  */
+
+static char *
+get_step_image_dir(int cr)
+{
+	return NULL;
+}
+ /*
 static char *
 get_step_image_dir(int cr)
 {
@@ -344,7 +345,7 @@ get_step_image_dir(int cr)
 	const char *dest;
 	char *rchar, *dir;
 
-	if (cr) {		/* checkpoint */
+	if (cr) {
 		ckpt_info = cr_get_checkpoint_info();
 		if (!ckpt_info) {
 			error("failed to get checkpoint info: %s",
@@ -352,7 +353,7 @@ get_step_image_dir(int cr)
 			return NULL;
 		}
 		dest = ckpt_info->dest;
-	} else {		/* retart */
+	} else {
 		rstrt_info = cr_get_restart_info();
 		if (!rstrt_info) {
 			error("failed to get restart info: %s",
@@ -370,6 +371,16 @@ get_step_image_dir(int cr)
 
 	return dir;
 }
+*/
+
+
+
+static int
+cr_callback(void *unused)
+{
+return 0;
+}
+/*
 
 static int
 cr_callback(void *unused)
@@ -385,24 +396,22 @@ cr_callback(void *unused)
 			rc = CR_CHECKPOINT_PERM_FAILURE;
 		} else if (slurm_checkpoint_tasks(jobid,
 						  stepid,
-						  time(NULL), /* timestamp */
+						  time(NULL),
 						  step_image_dir,
-						  60, /* wait */
+						  60,
 						  nodelist) != SLURM_SUCCESS) {
 			error ("failed to checkpoint step tasks");
 			rc = CR_CHECKPOINT_PERM_FAILURE;
 		}
 		xfree(step_image_dir);
 	}
-	rc = cr_checkpoint(rc);	/* dump */
+	rc = cr_checkpoint(rc);
 
 	if (rc < 0) {
 		fatal("checkpoint failed: %s", cr_strerror(errno));
 	} else if (rc == 0) {
-		/* continue, nothing to do */
 	} else {
-		/* restarted */
-		if (srun_pid) { /* srun forked */
+		if (srun_pid) {
 			if (step_launched) {
 				step_image_dir = get_step_image_dir(0);
 				if (step_image_dir == NULL) {
@@ -417,7 +426,6 @@ cr_callback(void *unused)
 			}
 		}
 
-		/* XXX: step_launched => listen_fd valid */
 		step_launched = 0;
 
 		debug2("step not launched.");
@@ -427,6 +435,9 @@ cr_callback(void *unused)
 
 	return 0;
 }
+
+*/
+
 
 int
 main(int argc, char **argv)
@@ -449,10 +460,15 @@ main(int argc, char **argv)
 		fatal("failed to initialize arguments for running srun");
 	}
 
+
+// manuel: removed all references to CR from the code
+
+/*
 	if ((cr_id = cr_init()) < 0) {
 		fatal("failed to initialize libcr: %s", cr_strerror(errno));
 	}
 	(void)cr_register_callback(cr_callback, NULL, CR_THREAD_CONTEXT);
+*/
 
 	/* forward signals. copied from cr_restart */
 	sa.sa_sigaction = signal_child;
@@ -469,11 +485,12 @@ main(int argc, char **argv)
 	sa.sa_flags = SA_RESTART | SA_SIGINFO | SA_NOCLDSTOP;
 	sigaction(SIGCHLD, &sa, NULL);
 
-	cr_enter_cs(cr_id); /* BEGIN CS: avoid race condition of whether srun is forked */
+//TODO manuel if this avoids a race condition, replace with something
+//	cr_enter_cs(cr_id); /* BEGIN CS: avoid race condition of whether srun is forked */
 	if ( fork_exec_srun() ) {
 		fatal("failed fork/exec/wait srun");
 	}
-	cr_leave_cs(cr_id); /* END CS */
+//	cr_leave_cs(cr_id); /* END CS */
 
 	while (1) {
 		pthread_mutex_lock(&step_launch_mutex);
@@ -487,13 +504,13 @@ main(int argc, char **argv)
 		if (_wait_for_srun_connect() < 0)
 			continue;
 
-		cr_enter_cs(cr_id); /* BEGIN CS: checkpoint(callback) will be delayed */
+//		cr_enter_cs(cr_id); /* BEGIN CS: checkpoint(callback) will be delayed */
 
 		srun_fd = accept(listen_fd, (struct sockaddr*)&ca, &ca_len);
 		if (srun_fd < 0) {
 			/* restarted before enter CS. socket will not be restored */
 			if (errno == EBADF) {
-				cr_leave_cs(cr_id);
+//				cr_leave_cs(cr_id);
 				continue;
 			} else {
 				fatal("failed to accept socket: %m");
@@ -506,7 +523,7 @@ main(int argc, char **argv)
 		step_launched = 1;
 		debug2("step launched");
 
-		cr_leave_cs(cr_id); /* END CS */
+//		cr_leave_cs(cr_id); /* END CS */
 	}
 
 	return 0;

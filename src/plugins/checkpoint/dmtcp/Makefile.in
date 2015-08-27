@@ -85,6 +85,7 @@ target_triplet = @target@
 subdir = src/plugins/checkpoint/dmtcp
 DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am \
 	$(srcdir)/cr_checkpoint.sh.in $(srcdir)/cr_restart.sh.in \
+	$(srcdir)/dmtcp_launch_wrapper.sh.in \
 	$(am__dist_pkglibexec_SCRIPTS_DIST) \
 	$(top_srcdir)/auxdir/depcomp
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -136,7 +137,8 @@ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = $(top_builddir)/config.h $(top_builddir)/slurm/slurm.h
-CONFIG_CLEAN_FILES = cr_checkpoint.sh cr_restart.sh
+CONFIG_CLEAN_FILES = cr_checkpoint.sh cr_restart.sh \
+	dmtcp_launch_wrapper.sh
 CONFIG_CLEAN_VPATH_FILES =
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
@@ -182,7 +184,8 @@ checkpoint_dmtcp_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_CFLAGS) $(CFLAGS) $(checkpoint_dmtcp_la_LDFLAGS) \
 	$(LDFLAGS) -o $@
 @WITH_DMTCP_TRUE@am_checkpoint_dmtcp_la_rpath = -rpath $(pkglibdir)
-am__dist_pkglibexec_SCRIPTS_DIST = cr_checkpoint.sh cr_restart.sh
+am__dist_pkglibexec_SCRIPTS_DIST = cr_checkpoint.sh cr_restart.sh \
+	dmtcp_launch_wrapper.sh
 SCRIPTS = $(dist_pkglibexec_SCRIPTS)
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
@@ -505,7 +508,7 @@ PLUGIN_FLAGS = -module -avoid-version --export-dynamic
 @WITH_DMTCP_TRUE@pkglib_LTLIBRARIES = checkpoint_dmtcp.la
 @WITH_DMTCP_TRUE@checkpoint_dmtcp_la_SOURCES = checkpoint_dmtcp.c
 @WITH_DMTCP_TRUE@checkpoint_dmtcp_la_LDFLAGS = $(SO_LDFLAGS) $(PLUGIN_FLAGS)
-@WITH_DMTCP_TRUE@dist_pkglibexec_SCRIPTS = cr_checkpoint.sh cr_restart.sh
+@WITH_DMTCP_TRUE@dist_pkglibexec_SCRIPTS = cr_checkpoint.sh cr_restart.sh dmtcp_launch_wrapper.sh
 @WITH_DMTCP_FALSE@EXTRA_checkpoint_dmtcp_la_SOURCES = checkpoint_dmtcp.c
 @WITH_DMTCP_FALSE@EXTRA_DIST = cr_checkpoint.sh cr_restart.sh
 all: all-am
@@ -545,6 +548,8 @@ $(am__aclocal_m4_deps):
 cr_checkpoint.sh: $(top_builddir)/config.status $(srcdir)/cr_checkpoint.sh.in
 	cd $(top_builddir) && $(SHELL) ./config.status $(subdir)/$@
 cr_restart.sh: $(top_builddir)/config.status $(srcdir)/cr_restart.sh.in
+	cd $(top_builddir) && $(SHELL) ./config.status $(subdir)/$@
+dmtcp_launch_wrapper.sh: $(top_builddir)/config.status $(srcdir)/dmtcp_launch_wrapper.sh.in
 	cd $(top_builddir) && $(SHELL) ./config.status $(subdir)/$@
 
 install-pkglibLTLIBRARIES: $(pkglib_LTLIBRARIES)

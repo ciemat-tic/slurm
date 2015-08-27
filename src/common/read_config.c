@@ -187,6 +187,7 @@ s_p_options_t slurm_conf_options[] = {
 	{"BurstBufferType", S_P_STRING},
 	{"CacheGroups", S_P_UINT16},
 	{"CheckpointType", S_P_STRING},
+	{"CheckpointPort", S_P_UINT32},
 	{"ChosLoc", S_P_STRING},
 	{"CoreSpecPlugin", S_P_STRING},
 	{"ClusterName", S_P_STRING},
@@ -3027,6 +3028,17 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 
 	if (!s_p_get_string(&conf->checkpoint_type, "CheckpointType", hashtbl))
 		conf->checkpoint_type = xstrdup(DEFAULT_CHECKPOINT_TYPE);
+
+
+	if (s_p_get_uint32(&conf->checkpoint_port, "CheckpointPort", hashtbl)) {
+		if (conf->checkpoint_port == 0) {
+			error("CheckpointPort=0 is invalid");
+			conf->checkpoint_port = DEFAULT_CHECKPOINT_PORT;
+		}
+	} else {
+		conf->checkpoint_port = DEFAULT_CHECKPOINT_PORT;
+	}
+
 
 	s_p_get_string(&conf->chos_loc, "ChosLoc", hashtbl);
 

@@ -25,6 +25,7 @@ SUBDIRS =		\
 	squeue		\
 	sreport		\
 	srun_cr		\
+	srun_dmtcp	\
 	sshare		\
 	sstat		\
 	strigger	\

@@ -7612,10 +7612,10 @@ static int _list_find_certain_job(void *job_entry, void *key) //id del trabajo a
 	 * when slurmdbd comes back up since we won't get another chance.
 	 * job_start won't pend for job_db_inx when the job is finished.
 	 */
-	if (with_slurmdbd && !job_ptr->db_index)
-		jobacct_storage_g_job_start(acct_db_conn, job_ptr)
-
-	return 1;		/* Purge the job */
+	if (with_slurmdbd && !job_ptr->db_index){
+		jobacct_storage_g_job_start(acct_db_conn, job_ptr);
+		return 1;
+	}		/* Purge the job */
 }
 
 

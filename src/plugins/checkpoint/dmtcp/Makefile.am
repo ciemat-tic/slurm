@@ -13,7 +13,7 @@ pkglib_LTLIBRARIES = checkpoint_dmtcp.la
 checkpoint_dmtcp_la_SOURCES = checkpoint_dmtcp.c
 checkpoint_dmtcp_la_LDFLAGS = $(SO_LDFLAGS) $(PLUGIN_FLAGS)
 
-dist_pkglibexec_SCRIPTS = cr_checkpoint.sh cr_restart.sh
+dist_pkglibexec_SCRIPTS = cr_checkpoint.sh cr_restart.sh dmtcp_launch_wrapper.sh
 
 force:
 

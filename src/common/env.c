@@ -823,6 +823,14 @@ int setup_env(env_t *env, bool preserve_env)
 		rc = SLURM_FAILURE;
 	}
 
+	if (env->ckpt_port
+	&& setenvf(&env->env, "SLURM_CHECKPOINT_PORT", "%u",
+		   env->ckpt_port)) {
+		error("Can't set SLURM_CHECKPOINT_PORT env variable");
+		rc = SLURM_FAILURE;
+	}
+
+
 	if (env->restart_cnt &&
 	    setenvf(&env->env, "SLURM_RESTART_COUNT", "%u", env->restart_cnt)) {
 		error("Can't set SLURM_RESTART_COUNT env variable");
@@ -1006,7 +1014,6 @@ env_array_for_job(char ***dest, const resource_allocation_response_msg_t *alloc,
 		env_array_overwrite_fmt(dest, "SLURM_BG_NUM_NODES",
 					"%u", node_cnt);
 	}
-
 	env_array_overwrite_fmt(dest, "SLURM_JOB_ID", "%u", alloc->job_id);
 	env_array_overwrite_fmt(dest, "SLURM_JOB_NAME", "%s", desc->name);
 	env_array_overwrite_fmt(dest, "SLURM_JOB_NUM_NODES", "%u", node_cnt);
@@ -1149,7 +1156,6 @@ env_array_for_batch_job(char ***dest, const batch_job_launch_msg_t *batch,
 				     cluster_name);
 		xfree(cluster_name);
 	}
-
 	env_array_overwrite_fmt(dest, "SLURM_JOB_ID", "%u", batch->job_id);
 	env_array_overwrite_fmt(dest, "SLURM_JOB_NUM_NODES", "%u", num_nodes);
 	if (cluster_flags & CLUSTER_FLAG_BG) {
@@ -1300,6 +1306,7 @@ env_array_for_step(char ***dest,
 
 	tpn = _uint16_array_to_str(step->step_layout->node_cnt,
 				   step->step_layout->tasks);
+
 	env_array_overwrite_fmt(dest, "SLURM_STEP_ID", "%u", step->job_step_id);
 	env_array_overwrite_fmt(dest, "SLURM_STEP_NODELIST",
 				"%s", step->step_layout->node_list);

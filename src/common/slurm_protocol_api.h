@@ -406,6 +406,19 @@ extern char *slurm_get_checkpoint_type(void);
  * returns the cluster name from slurmctld_conf object
  * RET char *    - cluster name,  MUST be xfreed by caller
  */
+
+ /* slurm_get_checkpoint_port
+  * returns the checkpoint_port from slurmctld_conf object
+  * RET char *    - checkpoint port, MUST be xfreed by caller
+  */
+ uint32_t slurm_get_checkpoint_port(void);
+
+ /* slurm_get_cluster_name
+  * returns the cluster name from slurmctld_conf object
+  * RET char *    - cluster name,  MUST be xfreed by caller
+  */
+
+
 char *slurm_get_cluster_name(void);
 
 /* slurm_get_crypto_type

@@ -415,21 +415,18 @@ extern check_jobinfo_t slurm_ckpt_copy_job(check_jobinfo_t jobinfo)
 
 extern int slurm_ckpt_stepd_prefork(stepd_step_rec_t *job)
 {
+	return SLURM_SUCCESS;
+
+}
+
+/* this one employs cr library, which I don't need no more
+extern int slurm_ckpt_stepd_prefork(stepd_step_rec_t *job)
+{
 	char *old_env = NULL, *new_env = NULL, *ptr = NULL, *save_ptr = NULL;
 
-	/*
-	 * I was thinking that a thread can be created here to
-	 * communicate with the tasks via sockets/pipes.
-	 * Maybe this is not needed - we can modify MVAPICH2
-	 */
-
-	/* set LD_PRELOAD for batch script shell */
 	//if (job->batch) {
 		old_env = getenvp(job->env, "LD_PRELOAD");
 		if (old_env) {
-			/* search and replace all libcr_run and libcr_omit
-			 * the old env value is messed up --
-			 * it will be replaced */
 			while ((ptr = strtok_r(old_env, " :", &save_ptr))) {
 				old_env = NULL;
 				if (!ptr)
@@ -450,6 +447,8 @@ extern int slurm_ckpt_stepd_prefork(stepd_step_rec_t *job)
 		//}
 	return SLURM_SUCCESS;
 }
+*/
+
 
 extern int slurm_ckpt_signal_tasks(stepd_step_rec_t *job, char *image_dir)
 {
@@ -480,6 +479,13 @@ extern int slurm_ckpt_signal_tasks(stepd_step_rec_t *job, char *image_dir)
 		fd[i*2+1] = -1;
 	}
 
+
+//TODO manuel this is original code. I dont understand it.
+//make sure than mine is valid for parallel codes
+
+/*
+
+
 	for (i = 0; i < job->node_tasks; i ++) {
 		if (job->batch) {
 			sprintf(context_file, "%s/script.ckpt", image_dir);
@@ -487,6 +493,12 @@ extern int slurm_ckpt_signal_tasks(stepd_step_rec_t *job, char *image_dir)
 			sprintf(context_file, "%s/task.%d.ckpt",
 				image_dir, job->task[i]->gtid);
 		}
+*/
+
+	for (i = 0; i < job->node_tasks; i ++) {
+		sprintf(context_file, "%s/dmtcp_restart_script.sh", image_dir);
+
+
 		sprintf(pid, "%u", (unsigned int)job->task[i]->pid);
 
 		if (pipe(&fd[i*2]) < 0) {
@@ -529,7 +541,7 @@ extern int slurm_ckpt_signal_tasks(stepd_step_rec_t *job, char *image_dir)
 
 			argv[0] = (char *)cr_checkpoint_path;
 			argv[1] = pid;
-			argv[2] = context_file;
+			argv[2] = context_file; //TODO manuel: poner el puerto aquí y pasarlo como parametro. A parte, ¿tiene sentido el puerto como variable de entorno????
 			argv[3] = NULL;
 
 			execv(argv[0], argv);
@@ -568,10 +580,11 @@ extern int slurm_ckpt_restart_task(stepd_step_rec_t *job,
 
 	/* jobid and stepid must NOT be spelled here,
 	 * since it is a new job/step */
+
 	if (job->batch) {
-		sprintf(context_file, "%s/script.ckpt", image_dir);
+		sprintf(context_file, "%s/dmtcp_restart_script.sh", image_dir);
 	} else {
-		sprintf(context_file, "%s/task.%d.ckpt", image_dir, gtid);
+		sprintf(context_file, "%s/dmtcp_restart_script.sh", image_dir, gtid);
 	}
 
 	argv[0] = (char *)cr_restart_path;

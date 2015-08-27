@@ -172,7 +172,7 @@ int srun(int ac, char **av)
 	env->nodeid = -1;
 	env->cli = NULL;
 	env->env = NULL;
-	env->ckpt_dir = NULL;
+	env->ckpt_dir = NULL; //this never takes value. bug?
 
 	slurm_conf_init(NULL);
 	debug_level = _slurm_debug_env_val();
@@ -261,6 +261,10 @@ int srun(int ac, char **av)
 		env->ws_col   = job->ws_col;
 		env->ws_row   = job->ws_row;
 	}
+
+  env->ckpt_dir   = job->ctx_params.ckpt_dir;
+  env->ckpt_port   = slurm_get_checkpoint_port();
+
 	setup_env(env, opt.preserve_env);
 	xfree(env->task_count);
 	xfree(env);

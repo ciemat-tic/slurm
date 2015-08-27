@@ -79,6 +79,7 @@ typedef struct env_options {
 	uint16_t ws_col;	/* window size, columns */
 	uint16_t ws_row;	/* window size, row count */
 	char *ckpt_dir;		/* --ckpt-dir=                 */
+	uint32_t ckpt_port;		/* --ckpt-port=                 */
 	uint16_t restart_cnt;	/* count of job restarts	*/
 	uint16_t batch_flag;	/* 1 if batch: queued job with script */
 	uint32_t uid;		/* user ID */
@@ -166,6 +167,7 @@ extern int env_array_for_batch_job(char ***dest,
  *	SLURM_STEP_LAUNCHER_PORT
  *	SLURM_STEP_LAUNCHER_IPADDR
  *	SLURM_STEP_RESV_PORTS
+ *  SLURM_CHECKPOINT_PORT
  *
  * Sets OBSOLETE variables:
  *	SLURM_STEPID

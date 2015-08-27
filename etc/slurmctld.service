@@ -1,0 +1,12 @@
+[Unit]
+Description=Slurm controller daemon
+After=network.target
+ConditionPathExists=${prefix}/etc/slurm.conf
+
+[Service]
+Type=forking
+ExecStart=${exec_prefix}/sbin/slurmctld
+PIDFile=/var/run/slurmctld.pid
+
+[Install]
+WantedBy=multi-user.target

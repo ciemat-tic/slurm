@@ -3516,7 +3516,6 @@ extern uint32_t slurm_get_return_code(slurm_msg_type_t type, void *data)
 		 * err field found in ret_data_info_t data type */
 		rc = SLURM_COMMUNICATIONS_CONNECTION_ERROR;
 		break;
-//TODO manuel not sure of this
 	case RESPONSE_PURGE:
 		rc = SLURM_SUCCESS;
 		break;

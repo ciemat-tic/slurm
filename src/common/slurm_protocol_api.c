@@ -895,6 +895,27 @@ extern char *slurm_get_checkpoint_type(void)
 	return checkpoint_type;
 }
 
+
+
+/* slurm_get_checkpoint_port
+ * returns the checkpoint_port from slurmctld_conf object
+ * RET char *    - checkpoint port, MUST be xfreed by caller
+ */
+uint32_t slurm_get_checkpoint_port(void)
+{
+	uint32_t checkpoint_port = NULL;
+	slurm_ctl_conf_t *conf;
+
+	if (slurmdbd_conf) {
+	} else {
+		conf = slurm_conf_lock();
+		checkpoint_port = conf->checkpoint_port;
+		slurm_conf_unlock();
+	}
+	return checkpoint_port;
+}
+
+
 /* slurm_get_cluster_name
  * returns the cluster name from slurmctld_conf object
  * RET char *    - cluster name,  MUST be xfreed by caller
@@ -4485,4 +4506,3 @@ uint16_t slurm_get_prolog_timeout(void)
 
 	return timeout;
 }
-
